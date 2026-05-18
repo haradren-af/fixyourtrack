@@ -1,306 +1,586 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { MapContainer, Marker, Polyline, TileLayer, Tooltip, useMap } from 'react-leaflet'
+import { CircleMarker, MapContainer, Marker, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import FitParser from 'fit-file-parser'
 import { gpx as toGeoJsonGpx } from '@tmcw/togeojson'
 import './App.css'
 
-const startIcon = L.divIcon({
-  className: 'point-icon point-icon-start',
-  iconSize: [18, 18],
-  iconAnchor: [9, 9],
-})
-
-const endIcon = L.divIcon({
-  className: 'point-icon point-icon-end',
-  iconSize: [18, 18],
-  iconAnchor: [9, 9],
-})
-
-const handleIcon = L.divIcon({
-  className: 'point-icon point-icon-handle',
-  iconSize: [16, 16],
-  iconAnchor: [8, 8],
-})
-
-const activeHandleIcon = L.divIcon({
-  className: 'point-icon point-icon-handle point-icon-handle-active',
-  iconSize: [16, 16],
-  iconAnchor: [8, 8],
-})
-
 const initialView = [55.751244, 37.618423]
+
+const anchorIcon = L.divIcon({
+  className: 'map-pin map-pin-anchor',
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
+})
+
+const endpointIcon = L.divIcon({
+  className: 'map-pin map-pin-endpoint',
+  iconSize: [20, 20],
+  iconAnchor: [10, 10],
+})
+
+const viaIcon = L.divIcon({
+  className: 'map-pin map-pin-via',
+  iconSize: [16, 16],
+  iconAnchor: [8, 8],
+})
+
+const offGridIcon = L.divIcon({
+  className: 'map-pin map-pin-offgrid',
+  iconSize: [16, 16],
+  iconAnchor: [8, 8],
+})
 
 function App() {
   const [track, setTrack] = useState(null)
-  const [selection, setSelection] = useState(null)
-  const [repairHandles, setRepairHandles] = useState([])
-  const [activeHandleIndex, setActiveHandleIndex] = useState(null)
-  const [message, setMessage] = useState('Загрузи GPX или FIT, и мы сможем исправить потерянный участок вручную.')
+  const [sourceTrack, setSourceTrack] = useState(null)
+  const [selectedCutPointIndex, setSelectedCutPointIndex] = useState(null)
+  const [tailAnchorPointIndex, setTailAnchorPointIndex] = useState(null)
+  const [removedSegmentSamples, setRemovedSegmentSamples] = useState([])
+  const [rebuildDirection, setRebuildDirection] = useState(null)
+  const [routeProfile, setRouteProfile] = useState('cycling')
+  const [mapMode, setMapMode] = useState('inspect')
+  const [endpoint, setEndpoint] = useState(null)
+  const [viaPoints, setViaPoints] = useState([])
+  const [activeWaypointId, setActiveWaypointId] = useState(null)
+  const [routePreview, setRoutePreview] = useState({
+    status: 'idle',
+    error: '',
+    segments: [],
+    geometry: [],
+    distanceMeters: 0,
+  })
+  const [message, setMessage] = useState('Load a GPX or FIT track to start cleaning the broken tail.')
   const [error, setError] = useState('')
-  const suppressTrackPickUntilRef = useRef(0)
-  const [mapEditEnabled, setMapEditEnabled] = useState(true)
+  const [isExporting, setIsExporting] = useState(false)
+  const [correctElevationOnExport, setCorrectElevationOnExport] = useState(false)
+  const [fitRequest, setFitRequest] = useState(0)
+  const pendingRouteFitRef = useRef(false)
+  const [collapsedPanels, setCollapsedPanels] = useState({
+    track: false,
+    suspicious: false,
+    rebuild: false,
+    waypoints: false,
+  })
 
   const suspiciousSegments = useMemo(() => {
-    if (!track) {
+    if (!sourceTrack) {
       return []
     }
 
-    const items = []
+    return getSuspiciousSegments(sourceTrack.points).map((segment) => ({
+      ...segment,
+      id: `${segment.startIndex}-${segment.endIndex}`,
+    }))
+  }, [sourceTrack])
 
-    for (let index = 0; index < track.points.length - 1; index += 1) {
-      const current = track.points[index]
-      const next = track.points[index + 1]
-      const distance = haversineDistance(current, next)
-      const seconds = getSecondsBetween(current.time, next.time)
-      const calcSpeedKmh = seconds > 0 ? (distance / seconds) * 3.6 : null
-      const deviceSpeedKmh = maxSpeedKmh(current.speed, next.speed)
-      const likelySignalLoss =
-        distance >= 120 &&
-        (
-          seconds === null ||
-          (seconds >= 30 && distance >= 120) ||
-          (seconds >= 120 && distance >= 60) ||
-          (calcSpeedKmh !== null && calcSpeedKmh > 42) ||
-          (deviceSpeedKmh !== null && deviceSpeedKmh < 12 && distance > 180)
-        )
+  const anchorPoint = useMemo(() => {
+    if (!track || tailAnchorPointIndex === null) {
+      return null
+    }
 
-      if (likelySignalLoss) {
-        items.push({
-          id: `${index}-${index + 1}`,
-          startIndex: index,
-          endIndex: index + 1,
-          distance,
-          seconds,
-          calcSpeedKmh,
-          deviceSpeedKmh,
+    return track.points[tailAnchorPointIndex] ?? null
+  }, [tailAnchorPointIndex, track])
+
+  const selectedCutPoint = useMemo(() => {
+    if (!track || selectedCutPointIndex === null) {
+      return null
+    }
+
+    return track.points[selectedCutPointIndex] ?? null
+  }, [selectedCutPointIndex, track])
+
+  const controlPoints = useMemo(() => {
+    if (!anchorPoint || !endpoint) {
+      return []
+    }
+
+    if (rebuildDirection === 'before') {
+      return [
+        { id: 'endpoint', lat: endpoint.lat, lon: endpoint.lon, kind: 'endpoint', offGrid: false },
+        ...viaPoints.map((point) => ({ ...point, kind: 'via' })),
+        { id: 'anchor', lat: anchorPoint.lat, lon: anchorPoint.lon, kind: 'anchor', offGrid: false },
+      ]
+    }
+
+    return [
+      { id: 'anchor', lat: anchorPoint.lat, lon: anchorPoint.lon, kind: 'anchor', offGrid: false },
+      ...viaPoints.map((point) => ({ ...point, kind: 'via' })),
+      { id: 'endpoint', lat: endpoint.lat, lon: endpoint.lon, kind: 'endpoint', offGrid: false },
+    ]
+  }, [anchorPoint, endpoint, rebuildDirection, viaPoints])
+
+  const effectiveRoutePreview = controlPoints.length
+    ? routePreview
+    : {
+        status: endpoint ? 'idle' : 'empty',
+        error: '',
+        segments: [],
+        geometry: [],
+        distanceMeters: 0,
+      }
+
+  const trackBounds = useMemo(() => {
+    if (!track) {
+      return null
+    }
+
+    const pointsForBounds = effectiveRoutePreview.geometry.length > 1
+      ? [...track.points, ...effectiveRoutePreview.geometry]
+      : track.points
+
+    return getBounds(pointsForBounds)
+  }, [effectiveRoutePreview.geometry, track])
+
+  const routeWarning = useMemo(() => {
+    if (!removedSegmentSamples.length || effectiveRoutePreview.distanceMeters <= 0) {
+      return ''
+    }
+
+    const anchorSample = rebuildDirection === 'before'
+      ? track?.samples?.[0] ?? null
+      : track?.samples?.[track.samples.length - 1] ?? null
+    if (!anchorSample) {
+      return ''
+    }
+
+    const previousDistance = Number.isFinite(anchorSample.distance) ? anchorSample.distance : null
+    const comparisonSample = rebuildDirection === 'before'
+      ? removedSegmentSamples[0]
+      : removedSegmentSamples[removedSegmentSamples.length - 1]
+    const lastDistance = Number.isFinite(comparisonSample?.distance)
+      ? comparisonSample.distance
+      : null
+
+    if (previousDistance === null || lastDistance === null) {
+      return ''
+    }
+
+    const recordedTailDistance = rebuildDirection === 'before'
+      ? previousDistance - lastDistance
+      : lastDistance - previousDistance
+    if (recordedTailDistance <= 0) {
+      return ''
+    }
+    const deltaRatio = Math.abs(effectiveRoutePreview.distanceMeters - recordedTailDistance) / recordedTailDistance
+    if (deltaRatio < 0.18) {
+      return ''
+    }
+
+    return `Suggested route is ${formatDistance(effectiveRoutePreview.distanceMeters)}, while removed segment distance was ${formatDistance(recordedTailDistance)}.`
+  }, [effectiveRoutePreview.distanceMeters, rebuildDirection, removedSegmentSamples, track])
+
+  useEffect(() => {
+    if (!controlPoints.length) {
+      return
+    }
+
+    let cancelled = false
+    const abortController = new AbortController()
+
+    async function buildRoutePreview() {
+      setRoutePreview((current) => ({
+        ...current,
+        status: 'loading',
+        error: '',
+      }))
+
+      try {
+        const segments = []
+        let geometry = []
+        let distanceMeters = 0
+
+        for (let index = 0; index < controlPoints.length - 1; index += 1) {
+          const from = controlPoints[index]
+          const to = controlPoints[index + 1]
+          const forceDirect = from.offGrid || to.offGrid
+          const segment = forceDirect
+            ? buildDirectSegment(from, to)
+            : await fetchRouteSegment(from, to, routeProfile, abortController.signal)
+
+          segments.push({
+            ...segment,
+            id: `${from.id}-${to.id}`,
+            insertAfterId: from.id,
+          })
+          geometry = appendSegmentGeometry(geometry, segment.geometry)
+          distanceMeters += segment.distanceMeters
+        }
+
+        if (!cancelled) {
+          setRoutePreview({
+            status: 'ready',
+            error: '',
+            segments,
+            geometry,
+            distanceMeters,
+          })
+          if (pendingRouteFitRef.current) {
+            pendingRouteFitRef.current = false
+            setFitRequest((current) => current + 1)
+          }
+        }
+      }
+      catch (nextError) {
+        if (abortController.signal.aborted || cancelled) {
+          return
+        }
+
+        setRoutePreview({
+          status: 'error',
+          error: nextError instanceof Error ? nextError.message : 'Could not build route preview.',
+          segments: [],
+          geometry: [],
+          distanceMeters: 0,
         })
       }
     }
 
-    return items.slice(0, 12)
-  }, [track])
+    buildRoutePreview()
 
-  const selectedPoints = useMemo(() => {
-    if (!track || !selection) {
-      return []
+    return () => {
+      cancelled = true
+      abortController.abort()
     }
-
-    return track.points.slice(selection.startIndex, selection.endIndex + 1)
-  }, [selection, track])
-
-  const selectedPolyline = useMemo(
-    () => selectedPoints.map((point) => [point.lat, point.lon]),
-    [selectedPoints],
-  )
-
-  const repairedPreview = useMemo(() => {
-    if (!selection || repairHandles.length < 2 || selectedPoints.length < 2) {
-      return []
-    }
-
-    return buildRepairedSegment(selectedPoints, repairHandles)
-  }, [repairHandles, selectedPoints, selection])
-
-  const trackPolyline = useMemo(
-    () => (track ? track.points.map((point) => [point.lat, point.lon]) : []),
-    [track],
-  )
+  }, [controlPoints, endpoint, routeProfile])
 
   async function handleFileChange(event) {
     const file = event.target.files?.[0]
-
     if (!file) {
       return
     }
 
     try {
       setError('')
-      setMessage(`Читаю файл ${file.name}...`)
-      const nextTrack = await loadTrack(file)
-      setTrack(nextTrack)
-      setSelection(null)
-      setRepairHandles([])
-      setActiveHandleIndex(null)
-      setMessage(
-        `Открыт ${file.name}: ${nextTrack.points.length} точек. Выбери подозрительный участок из списка или кликни по треку два раза.`,
-      )
+      setMessage(`Reading ${file.name}...`)
+      const loadedTrack = await loadTrack(file)
+      setSourceTrack(loadedTrack)
+      setTrack(loadedTrack)
+      setSelectedCutPointIndex(null)
+      setTailAnchorPointIndex(null)
+      setRemovedSegmentSamples([])
+      setRebuildDirection(null)
+      setEndpoint(null)
+      setViaPoints([])
+      setActiveWaypointId(null)
+      setMapMode('inspect')
+      setFitRequest((current) => current + 1)
+      setMessage(`Loaded ${file.name}. Click the track line to choose a cut point, then delete before it or after it.`)
     }
     catch (nextError) {
+      setSourceTrack(null)
       setTrack(null)
-      setSelection(null)
-      setRepairHandles([])
-      setActiveHandleIndex(null)
-      setError(nextError.message)
-      setMessage('Не удалось прочитать файл.')
+      setSelectedCutPointIndex(null)
+      setTailAnchorPointIndex(null)
+      setRemovedSegmentSamples([])
+      setRebuildDirection(null)
+      setEndpoint(null)
+      setViaPoints([])
+      setActiveWaypointId(null)
+      setMapMode('inspect')
+      setError(nextError instanceof Error ? nextError.message : 'Could not read the track file.')
+      setMessage('Track loading failed.')
     }
     finally {
       event.target.value = ''
     }
   }
 
-  function selectSegment(startIndex, endIndex) {
+  function selectCutPoint(pointIndex) {
     if (!track) {
       return
     }
 
-    const normalizedStart = Math.max(0, Math.min(startIndex, endIndex))
-    const normalizedEnd = Math.min(track.points.length - 1, Math.max(startIndex, endIndex))
-
-    if (normalizedEnd - normalizedStart < 1) {
+    const point = track.points[pointIndex]
+    if (!point) {
       return
     }
 
-    const nextSelection = {
-      startIndex: normalizedStart,
-      endIndex: normalizedEnd,
-    }
-
-    setSelection(nextSelection)
-    setRepairHandles(createDefaultHandles(track, nextSelection))
-    setActiveHandleIndex(1)
-    setMessage(
-      `Редактируем точки ${normalizedStart + 1}-${normalizedEnd + 1}. Перетаскивай белые маркеры, добавляй промежуточные точки и затем сохраняй GPX.`,
-    )
+    setSelectedCutPointIndex(pointIndex)
+    setMessage(`Cut point selected at point ${pointIndex + 1}. Choose whether to delete everything before it or after it.`)
   }
 
-  function handleTrackClick(index) {
+  function deleteAfterCutPoint() {
+    if (!track || selectedCutPointIndex === null) {
+      return
+    }
+
+    const anchor = track.points[selectedCutPointIndex]
+    if (!anchor) {
+      return
+    }
+
+    const anchorSampleIndex = anchor.sampleIndex
+    const nextSamples = track.samples.slice(0, anchorSampleIndex + 1)
+    const removedSamples = track.samples.slice(anchorSampleIndex + 1)
+
+    if (nextSamples.length < 2) {
+      setError('Keep at least two valid points before rebuilding the tail.')
+      return
+    }
+
+    const trimmedTrack = finalizeTrack({
+      ...track,
+      samples: nextSamples,
+    })
+
+    setTrack(trimmedTrack)
+    setSelectedCutPointIndex(trimmedTrack.points.length - 1)
+    setTailAnchorPointIndex(trimmedTrack.points.length - 1)
+    setRemovedSegmentSamples(removedSamples)
+    setRebuildDirection('after')
+    setEndpoint(null)
+    setViaPoints([])
+    setActiveWaypointId(null)
+    setMapMode('pick-endpoint')
+    setFitRequest((current) => current + 1)
+    setError('')
+    setMessage('Everything after the cut point was removed. The selected point is now the redraw anchor. Click the map to place the new end point.')
+  }
+
+  function deleteBeforeCutPoint() {
+    if (!track || selectedCutPointIndex === null) {
+      return
+    }
+
+    const cutPoint = track.points[selectedCutPointIndex]
+    if (!cutPoint) {
+      return
+    }
+
+    const cutSampleIndex = cutPoint.sampleIndex
+    const removedSamples = track.samples.slice(0, cutSampleIndex)
+    const nextSamples = track.samples.slice(cutSampleIndex)
+
+    if (nextSamples.length < 2) {
+      setError('Keep at least two valid points after the cut point.')
+      return
+    }
+
+    const trimmedTrack = finalizeTrack({
+      ...track,
+      samples: nextSamples,
+    })
+
+    setTrack(trimmedTrack)
+    setSelectedCutPointIndex(0)
+    setTailAnchorPointIndex(0)
+    setRemovedSegmentSamples(removedSamples)
+    setRebuildDirection('before')
+    setEndpoint(null)
+    setViaPoints([])
+    setActiveWaypointId(null)
+    setMapMode('pick-endpoint')
+    setFitRequest((current) => current + 1)
+    setError('')
+    setMessage('Everything before the cut point was removed. The selected point is now the redraw anchor. Click the map to place the new start point.')
+  }
+
+  function restoreOriginalTrack() {
+    if (!sourceTrack) {
+      return
+    }
+
+    setTrack(sourceTrack)
+    setSelectedCutPointIndex(null)
+    setTailAnchorPointIndex(null)
+    setRemovedSegmentSamples([])
+    setRebuildDirection(null)
+    setEndpoint(null)
+    setViaPoints([])
+    setActiveWaypointId(null)
+    setMapMode('inspect')
+    setFitRequest((current) => current + 1)
+    setError('')
+    setMessage('Original track restored. Click the track line to choose a new cut point.')
+  }
+
+  function handleMapClick(latlng) {
     if (!track) {
       return
     }
 
-    if (!selection) {
-      setSelection({ startIndex: index, endIndex: Math.min(index + 1, track.points.length - 1) })
-      setRepairHandles([])
-      setActiveHandleIndex(null)
-      setMessage(
-        `Выбрана стартовая точка ${index + 1}. Кликни по треку еще раз, чтобы задать конец проблемного участка.`,
-      )
+    if (mapMode === 'pick-endpoint') {
+      placeEndpoint(latlng)
       return
     }
 
-    if (selection.startIndex === selection.endIndex || selection.endIndex === selection.startIndex + 1) {
-      selectSegment(selection.startIndex, index)
-      return
-    }
-
-    setSelection({ startIndex: index, endIndex: index })
-    setRepairHandles([])
-    setActiveHandleIndex(null)
-    setMessage(`Новая стартовая точка ${index + 1}. Кликни по треку еще раз, чтобы выбрать конец участка.`)
-  }
-
-  function addHandle() {
-    if (repairHandles.length < 2) {
-      return
-    }
-
-    const longestSegmentIndex = getLongestSegmentIndex(repairHandles)
-    const before = repairHandles[longestSegmentIndex]
-    const after = repairHandles[longestSegmentIndex + 1]
-    const inserted = estimateMidpoint(before, after)
-
-    setRepairHandles((current) => {
-      const next = [...current]
-      next.splice(longestSegmentIndex + 1, 0, inserted)
-      return next
-    })
-    setActiveHandleIndex(longestSegmentIndex + 1)
-  }
-
-  function addHandleAtMapPoint(latlng) {
-    if (!selection || repairHandles.length < 2) {
-      return
-    }
-
-    const insertIndex = getClosestHandleSegmentIndex(repairHandles, {
-      lat: latlng.lat,
-      lon: latlng.lng,
-    })
-
-    setRepairHandles((current) => {
-      const next = [...current]
-      next.splice(insertIndex + 1, 0, { lat: latlng.lat, lon: latlng.lng })
-      return next
-    })
-    setActiveHandleIndex(insertIndex + 1)
-  }
-
-  function removeHandle() {
-    if (activeHandleIndex === null || activeHandleIndex === 0 || activeHandleIndex === repairHandles.length - 1) {
-      return
-    }
-
-    setRepairHandles((current) => current.filter((_, index) => index !== activeHandleIndex))
-    setActiveHandleIndex(null)
-  }
-
-  function applyRepair() {
-    if (!track || !selection || repairedPreview.length !== selectedPoints.length) {
-      if (!track || !selection || repairedPreview.length < 2) {
-        return
+    if (mapMode === 'add-offgrid-waypoint' && endpoint) {
+      addWaypointAtLocation(latlng, true)
       }
-    }
-
-    if (!track || !selection || repairedPreview.length < 2) {
-      return
-    }
-
-    const before = track.points.slice(0, selection.startIndex)
-    const after = track.points.slice(selection.endIndex + 1)
-    const nextPoints = [...before, ...repairedPreview, ...after]
-
-    setTrack(
-      finalizeTrack({
-        ...track,
-        points: nextPoints,
-      }),
-    )
-    const nextEndIndex = selection.startIndex + repairedPreview.length - 1
-    setSelection({ startIndex: selection.startIndex, endIndex: nextEndIndex })
-    setRepairHandles(createDefaultHandles({ points: nextPoints }, { startIndex: selection.startIndex, endIndex: nextEndIndex }))
-    setActiveHandleIndex(1)
-    setMessage('Исправление применено к треку. При необходимости можно выбрать следующий участок.')
   }
 
-  function exportTrack() {
+  function placeEndpoint(latlng) {
+    const isInitialPlacement = !endpoint
+    setEndpoint({ lat: latlng.lat, lon: latlng.lng })
+    if (isInitialPlacement) {
+      setViaPoints([])
+      setActiveWaypointId(null)
+    }
+    setMapMode('inspect')
+    pendingRouteFitRef.current = true
+    setMessage(
+      isInitialPlacement
+        ? `${rebuildDirection === 'before' ? 'Start point' : 'Endpoint'} placed. Click the suggested line to add waypoints, then drag them onto the real street or path.`
+        : `${rebuildDirection === 'before' ? 'Start point' : 'Endpoint'} moved. Existing waypoints were kept and the route was recalculated.`,
+    )
+  }
+
+  function handleTrackClick(latlng) {
     if (!track) {
       return
     }
 
-    const gpxContent = buildGpx(track)
-    const blob = new Blob([gpxContent], { type: 'application/gpx+xml;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `${sanitizeFilename(track.name || 'fixed-track')}.gpx`
-    link.click()
-    URL.revokeObjectURL(url)
-    setMessage('Готово: исправленный GPX выгружен.')
+    if (mapMode === 'pick-endpoint') {
+      placeEndpoint(latlng)
+      return
+    }
+
+    if (mapMode === 'add-offgrid-waypoint') {
+      return
+    }
+
+    const nearestPointIndex = findNearestPointIndex(track.points, latlng, 160)
+    if (nearestPointIndex === null) {
+      setMessage('Click closer to the track line to choose a cut point.')
+      return
+    }
+
+    selectCutPoint(nearestPointIndex)
   }
+
+  function handleRouteSegmentClick(segment, latlng) {
+    if (!endpoint) {
+      return
+    }
+
+    addWaypointAtLocation(latlng, false, segment.insertAfterId)
+  }
+
+  function addWaypointAtLocation(latlng, offGrid, preferredInsertAfterId = null) {
+    const nextWaypoint = createWaypoint(latlng, offGrid)
+    const insertAfterId = preferredInsertAfterId ?? getNearestRouteInsertAfterId(latlng, effectiveRoutePreview.segments)
+    const insertIndex = resolveInsertIndexFromControlId(insertAfterId, viaPoints, rebuildDirection)
+
+    setViaPoints((current) => {
+      const next = [...current]
+      next.splice(insertIndex, 0, nextWaypoint)
+      return next
+    })
+    setActiveWaypointId(nextWaypoint.id)
+    setMapMode('inspect')
+    setMessage(
+      offGrid
+        ? 'Off-grid waypoint added on the nearest route segment. The route will use direct geometry around this point.'
+        : 'Waypoint added. Drag it to refine the rebuilt route.',
+    )
+  }
+
+  function handleWaypointMove(waypointId, latlng) {
+    setViaPoints((current) => current.map((point) => (
+      point.id === waypointId
+        ? { ...point, lat: latlng.lat, lon: latlng.lng }
+        : point
+    )))
+  }
+
+  function setWaypointOffGrid(waypointId, checked) {
+    setViaPoints((current) => current.map((point) => (
+      point.id === waypointId
+        ? { ...point, offGrid: checked }
+        : point
+    )))
+  }
+
+  function removeWaypoint(waypointId) {
+    setViaPoints((current) => current.filter((point) => point.id !== waypointId))
+    setActiveWaypointId((current) => (current === waypointId ? null : current))
+    setMessage('Waypoint removed.')
+  }
+
+  function togglePanel(panelKey) {
+    setCollapsedPanels((current) => ({
+      ...current,
+      [panelKey]: !current[panelKey],
+    }))
+  }
+
+  async function exportTrack() {
+    if (!track || isExporting) {
+      return
+    }
+
+    try {
+      setIsExporting(true)
+      setError('')
+
+      let exportableTrack = buildExportTrack(track, removedSegmentSamples, effectiveRoutePreview.geometry, rebuildDirection)
+
+      if (correctElevationOnExport) {
+        setMessage('Correcting elevation from terrain data before export...')
+        exportableTrack = await correctTrackElevation(exportableTrack)
+      }
+
+      const gpxContent = buildGpx(exportableTrack)
+      const blob = new Blob([gpxContent], { type: 'application/gpx+xml;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${sanitizeFilename(exportableTrack.name || 'fixed-track')}.gpx`
+      link.click()
+      URL.revokeObjectURL(url)
+      setMessage('Cleaned GPX exported.')
+    }
+    catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : 'Export failed.')
+      setMessage('Could not export the repaired track.')
+    }
+    finally {
+      setIsExporting(false)
+    }
+  }
+
+  const activeWaypoint = activeWaypointId
+    ? viaPoints.find((point) => point.id === activeWaypointId) ?? null
+    : null
+  const hasTrackEdits = Boolean(sourceTrack && track && sourceTrack.samples.length !== track.samples.length)
+  const isPickingEndpoint = mapMode === 'pick-endpoint'
+  const isAddingOffGrid = mapMode === 'add-offgrid-waypoint'
+  const endpointLabel = rebuildDirection === 'before' ? 'New start point' : 'New endpoint'
+  const layoutSignature = `${collapsedPanels.track}-${collapsedPanels.suspicious}-${collapsedPanels.rebuild}-${collapsedPanels.waypoints}`
 
   return (
     <div className="app-shell">
-      <section className="hero-panel">
+      <section className="hero">
         <div className="hero-copy">
-          <p className="eyebrow">Fix Your Track</p>
-          <h1>Ручной ремонт GPS-треков для Strava и Komoot</h1>
-          <p className="lead">
-            Загружай трек с велокомпьютера, находи прямые участки после потери GPS и правь
-            геометрию вручную по карте. На выходе получишь чистый GPX для повторного импорта.
-          </p>
+          <p className="eyebrow">FixYourTrack / Tail Rebuild</p>
+          <h1>Rebuild the broken end of a GPS track.</h1>
+          <p className="lead">Trim tail. Place endpoint. Refine route.</p>
         </div>
 
-        <div className="action-card">
-          <label className="file-picker">
-            <input type="file" accept=".gpx,.fit" onChange={handleFileChange} />
-            <span>Открыть GPX или FIT</span>
+        <div className="hero-actions">
+          <div className="hero-actions-row">
+            <label className="file-picker">
+              <input type="file" accept=".gpx,.fit" onChange={handleFileChange} />
+              <span>Load GPX or FIT</span>
+            </label>
+
+            <button type="button" className="ghost-button" onClick={exportTrack} disabled={!track || isExporting}>
+              Export cleaned GPX
+            </button>
+          </div>
+
+          <label className="checkbox-row checkbox-row-compact">
+            <input
+              type="checkbox"
+              checked={correctElevationOnExport}
+              onChange={(event) => setCorrectElevationOnExport(event.target.checked)}
+            />
+            <span>Correct elevation on export using terrain data</span>
           </label>
-          <button type="button" className="ghost-button" onClick={exportTrack} disabled={!track}>
-            Скачать исправленный GPX
-          </button>
-          <p className="status-text">{message}</p>
+
+          <p className="status-text status-text-compact">{message}</p>
           {error ? <p className="error-text">{error}</p> : null}
         </div>
       </section>
@@ -308,199 +588,371 @@ function App() {
       <section className="workspace">
         <aside className="sidebar">
           <div className="panel">
-            <h2>Трек</h2>
-            {track ? (
-              <dl className="stats-grid">
-                <div>
-                  <dt>Имя</dt>
-                  <dd>{track.name}</dd>
+            <div className="panel-header">
+              <div className="panel-header-main">
+                <h2>Track</h2>
+                {track ? <span>{track.format.toUpperCase()}</span> : null}
+              </div>
+              <button type="button" className="panel-toggle" onClick={() => togglePanel('track')} aria-label="Toggle Track panel">
+                {collapsedPanels.track ? '+' : '-'}
+              </button>
+            </div>
+
+            {!collapsedPanels.track && track ? (
+              <>
+                <dl className="stats-grid">
+                  <div>
+                    <dt>Name</dt>
+                    <dd>{track.name}</dd>
+                  </div>
+                  <div>
+                    <dt>Points</dt>
+                    <dd>{track.points.length}</dd>
+                  </div>
+                  <div>
+                    <dt>Distance</dt>
+                    <dd>{formatDistance(track.distanceMeters)}</dd>
+                  </div>
+                  <div>
+                    <dt>Suspicious jumps</dt>
+                    <dd>{suspiciousSegments.length}</dd>
+                  </div>
+                </dl>
+
+                <div className="step-box">
+                  <div className="step-title">1. Click the track to choose a cut point</div>
+                  <p className="muted-text">
+                    Click directly on the recorded track line. Then delete everything before that point or after it.
+                    Whichever side you delete, the kept boundary point becomes the redraw anchor.
+                  </p>
+                  <div className="stack">
+                    <button type="button" className="ghost-button" onClick={deleteBeforeCutPoint} disabled={!selectedCutPoint}>
+                      Delete everything before cut point
+                    </button>
+                    <button type="button" className="primary-button" onClick={deleteAfterCutPoint} disabled={!selectedCutPoint}>
+                      Delete everything after cut point
+                    </button>
+                    {hasTrackEdits ? (
+                      <button type="button" className="ghost-button" onClick={restoreOriginalTrack}>
+                        Restore original track
+                      </button>
+                    ) : null}
+                  </div>
+                  {selectedCutPoint ? (
+                    <div className="note note-neutral">
+                      Selected cut point: {selectedCutPointIndex + 1} at {formatLatLon(selectedCutPoint)}
+                    </div>
+                  ) : null}
                 </div>
-                <div>
-                  <dt>Точек</dt>
-                  <dd>{track.points.length}</dd>
-                </div>
-                <div>
-                  <dt>Дистанция</dt>
-                  <dd>{formatDistance(track.distanceMeters)}</dd>
-                </div>
-                <div>
-                  <dt>Формат</dt>
-                  <dd>{track.format.toUpperCase()}</dd>
-                </div>
-              </dl>
-            ) : (
-              <p className="muted-text">После загрузки здесь появится сводка по треку.</p>
-            )}
+              </>
+            ) : !collapsedPanels.track ? (
+              <p className="muted-text">Load a track to start.</p>
+            ) : null}
           </div>
 
           <div className="panel">
             <div className="panel-header">
-              <h2>Подозрительные разрывы</h2>
-              <span>{suspiciousSegments.length}</span>
+              <div className="panel-header-main">
+                <h2>Suspicious jumps</h2>
+                {suspiciousSegments.length ? <span>jump hints</span> : null}
+              </div>
+              <button type="button" className="panel-toggle" onClick={() => togglePanel('suspicious')} aria-label="Toggle Suspicious jumps panel">
+                {collapsedPanels.suspicious ? '+' : '-'}
+              </button>
             </div>
-            {suspiciousSegments.length ? (
+
+            {!collapsedPanels.suspicious && suspiciousSegments.length ? (
               <div className="segment-list">
-                {suspiciousSegments.map((segment) => (
+                {suspiciousSegments.map((segment, index) => (
                   <button
-                    type="button"
                     key={segment.id}
-                    className="segment-button"
-                    onClick={() => selectSegment(segment.startIndex, segment.endIndex)}
+                    type="button"
+                    className={`segment-button ${selectedCutPointIndex === segment.startIndex ? 'segment-button-active' : ''}`}
+                    onClick={() => selectCutPoint(segment.startIndex)}
                   >
-                    <strong>
-                      Точки {segment.startIndex + 1}-{segment.endIndex + 1}
-                    </strong>
-                    <span>{formatDistance(segment.distance)}</span>
+                    <strong>Jump {index + 1}</strong>
                     <span>
-                      {segment.calcSpeedKmh
-                        ? `${segment.calcSpeedKmh.toFixed(1)} км/ч по GPS`
-                        : 'Нет времени между точками'}
+                      Suggested cut near points {segment.startIndex + 1} {'->'} {segment.endIndex + 1}
+                    </span>
+                    <span>
+                      {formatDistance(segment.distance)} in {formatDuration(segment.seconds)}
                     </span>
                   </button>
                 ))}
               </div>
-            ) : (
-              <p className="muted-text">
-                Автопоиск не нашел явных проблем или трек еще не загружен. Можно выбрать участок
-                прямо кликом по линии на карте.
-              </p>
-            )}
+            ) : !collapsedPanels.suspicious ? (
+              <p className="muted-text">No obvious spoofed tail was detected automatically.</p>
+            ) : null}
           </div>
 
           <div className="panel">
             <div className="panel-header">
-              <h2>Редактор участка</h2>
-              <span>{selection ? `${selection.startIndex + 1}-${selection.endIndex + 1}` : 'не выбран'}</span>
-            </div>
-            <p className="muted-text">
-              1. Выбери битый участок.
-              <br />
-              2. Перетаскивай белые контрольные точки.
-              <br />
-              3. Добавляй промежуточные точки для изгибов.
-              <br />
-              4. Применяй и выгружай GPX.
-            </p>
-            <div className="editor-actions">
-              <button type="button" onClick={addHandle} disabled={!selection}>
-                Добавить контрольную точку
-              </button>
-              <button
-                type="button"
-                onClick={() => setMapEditEnabled((current) => !current)}
-                disabled={!selection}
-              >
-                {mapEditEnabled ? 'Клик по карте: вкл' : 'Клик по карте: выкл'}
-              </button>
-              <button
-                type="button"
-                onClick={removeHandle}
-                disabled={
-                  activeHandleIndex === null ||
-                  activeHandleIndex === 0 ||
-                  activeHandleIndex === repairHandles.length - 1
-                }
-              >
-                Удалить активную точку
-              </button>
-              <button type="button" className="primary-button" onClick={applyRepair} disabled={!selection}>
-                Применить исправление
+              <div className="panel-header-main">
+                <h2>Tail rebuild</h2>
+                {anchorPoint ? <span>routing</span> : null}
+              </div>
+              <button type="button" className="panel-toggle" onClick={() => togglePanel('rebuild')} aria-label="Toggle Tail rebuild panel">
+                {collapsedPanels.rebuild ? '+' : '-'}
               </button>
             </div>
+
+            {!collapsedPanels.rebuild && anchorPoint ? (
+              <>
+                <div className="inspector-grid">
+                  <div>
+                    <dt>Anchor</dt>
+                    <dd>{formatLatLon(anchorPoint)}</dd>
+                  </div>
+                  <div>
+                    <dt>Removed samples</dt>
+                    <dd>{removedSegmentSamples.length}</dd>
+                  </div>
+                  <div>
+                    <dt>{rebuildDirection === 'before' ? 'Start point' : 'Endpoint'}</dt>
+                    <dd>{endpoint ? formatLatLon(endpoint) : 'not set'}</dd>
+                  </div>
+                  <div>
+                    <dt>Waypoints</dt>
+                    <dd>{viaPoints.length}</dd>
+                  </div>
+                </div>
+
+                {isPickingEndpoint ? (
+                  <div className="note note-action">
+                    Endpoint placement is active. Click on the map to set the missing {rebuildDirection === 'before' ? 'start point' : 'end point'}.
+                  </div>
+                ) : null}
+                {isAddingOffGrid ? (
+                  <div className="note note-warning">
+                    Off-grid placement is active. Click on the map to place an off-grid waypoint, then continue shaping the route.
+                  </div>
+                ) : null}
+
+                <div className="mode-chip-row">
+                  <span className={`mode-chip ${isPickingEndpoint || isAddingOffGrid ? 'mode-chip-active' : ''}`}>
+                    Mode: {isPickingEndpoint ? 'placing endpoint' : isAddingOffGrid ? 'adding off-grid waypoint' : mapMode}
+                  </span>
+                </div>
+
+                <div className="field-group">
+                  <label htmlFor="route-profile">Navigator profile</label>
+                  <select
+                    id="route-profile"
+                    value={routeProfile}
+                    onChange={(event) => setRouteProfile(event.target.value)}
+                  >
+                    <option value="cycling">Cycling</option>
+                    <option value="walking">Walking</option>
+                    <option value="driving">Driving</option>
+                  </select>
+                </div>
+
+                <div className="stack">
+                  <button type="button" className="primary-button" onClick={() => setMapMode('pick-endpoint')}>
+                    {endpoint
+                      ? `Move ${rebuildDirection === 'before' ? 'start point' : 'endpoint'} on map`
+                      : `Place ${rebuildDirection === 'before' ? 'start point' : 'endpoint'} on map`}
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => setMapMode((current) => (current === 'add-offgrid-waypoint' ? 'inspect' : 'add-offgrid-waypoint'))}
+                    disabled={!endpoint}
+                  >
+                    {isAddingOffGrid ? 'Cancel off-grid placement' : 'Add off-grid waypoint'}
+                  </button>
+                </div>
+
+                {effectiveRoutePreview.status === 'loading' ? (
+                  <div className="note note-neutral">Building route suggestion...</div>
+                ) : null}
+                {effectiveRoutePreview.status === 'error' ? (
+                  <div className="note note-danger">{effectiveRoutePreview.error}</div>
+                ) : null}
+                {effectiveRoutePreview.status === 'ready' ? (
+                  <div className="note note-good">
+                    Suggested rebuild length: {formatDistance(effectiveRoutePreview.distanceMeters)}
+                  </div>
+                ) : null}
+                {routeWarning ? <div className="note note-warning">{routeWarning}</div> : null}
+              </>
+            ) : !collapsedPanels.rebuild ? (
+              <p className="muted-text">Delete either side of the cut point to start redrawing from the kept boundary point.</p>
+            ) : null}
+          </div>
+
+          <div className="panel">
+            <div className="panel-header">
+              <div className="panel-header-main">
+                <h2>Waypoint editor</h2>
+                {activeWaypoint ? <span>selected</span> : null}
+              </div>
+              <button type="button" className="panel-toggle" onClick={() => togglePanel('waypoints')} aria-label="Toggle Waypoint editor panel">
+                {collapsedPanels.waypoints ? '+' : '-'}
+              </button>
+            </div>
+
+            {!collapsedPanels.waypoints && viaPoints.length ? (
+              <div className="segment-list">
+                {viaPoints.map((point, index) => (
+                  <button
+                    key={point.id}
+                    type="button"
+                    className={`segment-button ${activeWaypointId === point.id ? 'segment-button-active' : ''}`}
+                    onClick={() => setActiveWaypointId(point.id)}
+                  >
+                    <strong>
+                      {point.offGrid ? 'Off-grid' : 'Waypoint'} {index + 1}
+                    </strong>
+                    <span>{formatLatLon(point)}</span>
+                  </button>
+                ))}
+              </div>
+            ) : !collapsedPanels.waypoints ? (
+              <p className="muted-text">Click the preview line to add a normal waypoint, or use “Add off-grid waypoint” and then click the map.</p>
+            ) : null}
+
+            {!collapsedPanels.waypoints && activeWaypoint ? (
+              <div className="waypoint-box">
+                <p className="muted-text">Select any waypoint and toggle off-grid when that part of the route should ignore roads.</p>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={activeWaypoint.offGrid}
+                    onChange={(event) => setWaypointOffGrid(activeWaypoint.id, event.target.checked)}
+                  />
+                  <span>Off-grid waypoint</span>
+                </label>
+                <button type="button" className="ghost-button" onClick={() => removeWaypoint(activeWaypoint.id)}>
+                  Remove selected waypoint
+                </button>
+              </div>
+            ) : null}
           </div>
         </aside>
 
         <div className="map-panel">
+          {isPickingEndpoint || isAddingOffGrid ? (
+            <div className="map-mode-banner">
+              {isPickingEndpoint
+                ? `Click on the map to place the new ${rebuildDirection === 'before' ? 'start point' : 'endpoint'}.`
+                : 'Click on the map to place an off-grid waypoint.'}
+            </div>
+          ) : null}
           <MapContainer center={initialView} zoom={11} scrollWheelZoom className="map">
             <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
 
-            {track ? <FitBounds points={track.points} /> : null}
+            <MapClickBridge onMapClick={handleMapClick} />
+            <MapSizeInvalidator request={layoutSignature} />
+            <MapResizeObserver />
+            <FitBounds bounds={trackBounds} request={fitRequest} />
 
-            {track ? (
-              <TrackPolylineLayer
-                points={track.points}
-                onPointPick={handleTrackClick}
-                suppressTrackPickUntilRef={suppressTrackPickUntilRef}
-                selectionActive={Boolean(selection)}
-                mapEditEnabled={mapEditEnabled}
-                onAddHandle={addHandleAtMapPoint}
+            {hasTrackEdits ? sourceTrack?.pointSegments.map((segment, index) => (
+              <Polyline
+                key={`source-${index}`}
+                positions={segment.map((point) => [point.lat, point.lon])}
+                pathOptions={{ color: '#6d7c78', weight: 4, opacity: 0.32, interactive: false }}
               />
+            )) : null}
+
+            {track?.pointSegments.map((segment, index) => (
+              <Polyline
+                key={`track-${index}`}
+                positions={segment.map((point) => [point.lat, point.lon])}
+                pathOptions={{ color: '#1d5f56', weight: 5, opacity: 0.9 }}
+                eventHandlers={{
+                  click: (event) => handleTrackClick(event.latlng),
+                }}
+              />
+            ))}
+
+            {suspiciousSegments.map((segment) => (
+              <Polyline
+                key={`jump-${segment.id}`}
+                positions={[
+                  [sourceTrack.points[segment.startIndex].lat, sourceTrack.points[segment.startIndex].lon],
+                  [sourceTrack.points[segment.endIndex].lat, sourceTrack.points[segment.endIndex].lon],
+                ]}
+                pathOptions={{ color: '#cf4920', weight: 4, opacity: 0.95, dashArray: '10 8', interactive: false }}
+              />
+            ))}
+
+            {effectiveRoutePreview.segments.map((segment) => (
+              <Polyline
+                key={segment.id}
+                positions={segment.geometry.map((point) => [point.lat, point.lon])}
+                pathOptions={{
+                  color: segment.mode === 'direct' ? '#8f5d1b' : '#2454d2',
+                  weight: segment.mode === 'direct' ? 4 : 5,
+                  opacity: 0.95,
+                  dashArray: segment.mode === 'direct' ? '7 7' : undefined,
+                }}
+                eventHandlers={{
+                  click: (event) => handleRouteSegmentClick(segment, event.latlng),
+                }}
+              />
+            ))}
+
+            {selectedCutPoint ? (
+              <CircleMarker
+                center={[selectedCutPoint.lat, selectedCutPoint.lon]}
+                radius={9}
+                pathOptions={{
+                  color: '#ffffff',
+                  weight: 3,
+                  fillColor: '#cf4920',
+                  fillOpacity: 0.96,
+                }}
+              >
+                <Tooltip direction="top" offset={[0, -10]} permanent>
+                  Cut point
+                </Tooltip>
+              </CircleMarker>
             ) : null}
 
-            {trackPolyline.length ? (
-              <Polyline positions={trackPolyline} pathOptions={{ color: '#204e4a', weight: 4, opacity: 0.5 }} />
+            {anchorPoint ? (
+              <Marker position={[anchorPoint.lat, anchorPoint.lon]} icon={anchorIcon}>
+                <Tooltip direction="top" offset={[0, -10]} permanent>
+                  Last known point
+                </Tooltip>
+              </Marker>
             ) : null}
 
-            {selectedPolyline.length ? (
-              <Polyline positions={selectedPolyline} pathOptions={{ color: '#f15a24', weight: 7, opacity: 0.75 }} />
+            {endpoint ? (
+              <Marker
+                position={[endpoint.lat, endpoint.lon]}
+                icon={endpointIcon}
+                draggable
+                eventHandlers={{
+                  dragend: (event) => placeEndpoint(event.target.getLatLng()),
+                }}
+              >
+                <Tooltip direction="top" offset={[0, -10]} permanent>
+                  {endpointLabel}
+                </Tooltip>
+              </Marker>
             ) : null}
 
-            {repairedPreview.length ? (
-              <>
-                <Polyline
-                  positions={repairedPreview.map((point) => [point.lat, point.lon])}
-                  pathOptions={{ color: '#111111', weight: 7, opacity: 0.9, lineCap: 'round' }}
-                />
-                <Polyline
-                  positions={repairedPreview.map((point) => [point.lat, point.lon])}
-                  pathOptions={{
-                    color: '#f4f0e8',
-                    weight: 5,
-                    opacity: 1,
-                    dashArray: '12 8',
-                    lineCap: 'round',
-                  }}
-                />
-              </>
-            ) : null}
-
-            {repairHandles.map((point, index) => {
-              const isEdge = index === 0 || index === repairHandles.length - 1
-
-              return (
-                <Marker
-                  key={`${point.lat}-${point.lon}-${index}`}
-                  position={[point.lat, point.lon]}
-                  draggable
-                  icon={
-                    isEdge
-                      ? index === 0
-                        ? startIcon
-                        : endIcon
-                      : activeHandleIndex === index
-                        ? activeHandleIcon
-                        : handleIcon
-                  }
-                  eventHandlers={{
-                    click: () => {
-                      suppressTrackPickUntilRef.current = Date.now() + 250
-                      setActiveHandleIndex(index)
-                    },
-                    dragstart: () => {
-                      suppressTrackPickUntilRef.current = Date.now() + 5_000
-                    },
-                    dragend: (event) => {
-                      const nextLatLng = event.target.getLatLng()
-                      suppressTrackPickUntilRef.current = Date.now() + 400
-                      setRepairHandles((current) =>
-                        current.map((item, itemIndex) =>
-                          itemIndex === index
-                            ? { lat: nextLatLng.lat, lon: nextLatLng.lng }
-                            : item,
-                        ),
-                      )
-                    },
-                  }}
-                >
-                  <Tooltip direction="top" offset={[0, -10]} opacity={1}>
-                    {isEdge ? (index === 0 ? 'Начало участка' : 'Конец участка') : `Контрольная точка ${index}`}
-                  </Tooltip>
-                </Marker>
-              )
-            })}
+            {viaPoints.map((point, index) => (
+              <Marker
+                key={point.id}
+                position={[point.lat, point.lon]}
+                icon={point.offGrid ? offGridIcon : viaIcon}
+                draggable
+                eventHandlers={{
+                  click: () => setActiveWaypointId(point.id),
+                  dblclick: () => removeWaypoint(point.id),
+                  dragend: (event) => handleWaypointMove(point.id, event.target.getLatLng()),
+                }}
+              >
+                <Tooltip direction="top" offset={[0, -10]}>
+                  {point.offGrid ? 'Off-grid' : 'Waypoint'} {index + 1}
+                </Tooltip>
+              </Marker>
+            ))}
           </MapContainer>
         </div>
       </section>
@@ -508,62 +960,412 @@ function App() {
   )
 }
 
-function FitBounds({ points }) {
-  const map = useMap()
-
-  useEffect(() => {
-    if (!points.length) {
-      return
-    }
-
-    const bounds = L.latLngBounds(points.map((point) => [point.lat, point.lon]))
-    map.fitBounds(bounds, { padding: [32, 32] })
-  }, [map, points])
+function MapClickBridge({ onMapClick }) {
+  useMapEvents({
+    click(event) {
+      onMapClick(event.latlng)
+    },
+  })
 
   return null
 }
 
-function TrackPolylineLayer({
-  points,
-  onPointPick,
-  suppressTrackPickUntilRef,
-  selectionActive,
-  mapEditEnabled,
-  onAddHandle,
-}) {
+function MapSizeInvalidator({ request }) {
+  const map = useMap()
+  const previousRequestRef = useRef(null)
+
+  useEffect(() => {
+    if (request === previousRequestRef.current) {
+      return
+    }
+
+    previousRequestRef.current = request
+    requestAnimationFrame(() => {
+      map.invalidateSize(false)
+    })
+  }, [map, request])
+
+  return null
+}
+
+function MapResizeObserver() {
   const map = useMap()
 
   useEffect(() => {
-    function handleClick(event) {
-      if (Date.now() < suppressTrackPickUntilRef.current) {
-        return
-      }
-
-       if (selectionActive && mapEditEnabled) {
-        onAddHandle(event.latlng)
-        suppressTrackPickUntilRef.current = Date.now() + 250
-        return
-      }
-
-      const nearestIndex = findNearestPointIndex(points, event.latlng)
-      if (nearestIndex !== null) {
-        onPointPick(nearestIndex)
-      }
+    const container = map.getContainer()
+    if (typeof ResizeObserver === 'undefined') {
+      return undefined
     }
 
-    map.on('click', handleClick)
-    return () => map.off('click', handleClick)
-  }, [
-    map,
-    mapEditEnabled,
-    onAddHandle,
-    onPointPick,
-    points,
-    selectionActive,
-    suppressTrackPickUntilRef,
-  ])
+    const observer = new ResizeObserver(() => {
+      requestAnimationFrame(() => {
+        map.invalidateSize(false)
+      })
+    })
+
+    observer.observe(container)
+
+    return () => observer.disconnect()
+  }, [map])
 
   return null
+}
+
+function FitBounds({ bounds, request }) {
+  const map = useMap()
+  const previousRequestRef = useRef(null)
+
+  useEffect(() => {
+    if (!bounds || request === previousRequestRef.current) {
+      return
+    }
+
+    previousRequestRef.current = request
+    map.fitBounds(bounds, {
+      padding: [36, 36],
+    })
+  }, [bounds, map, request])
+
+  return null
+}
+
+function createWaypoint(latlng, offGrid) {
+  return {
+    id: `waypoint-${crypto.randomUUID()}`,
+    lat: latlng.lat,
+    lon: latlng.lng,
+    offGrid,
+  }
+}
+
+function resolveInsertIndexFromControlId(controlId, viaPoints, rebuildDirection) {
+  const startControlId = rebuildDirection === 'before' ? 'endpoint' : 'anchor'
+
+  if (controlId === startControlId) {
+    return 0
+  }
+
+  const waypointIndex = viaPoints.findIndex((point) => point.id === controlId)
+  if (waypointIndex === -1) {
+    return viaPoints.length
+  }
+
+  return waypointIndex + 1
+}
+
+function getNearestRouteInsertAfterId(latlng, segments) {
+  if (!segments.length) {
+    return 'anchor'
+  }
+
+  let bestInsertAfterId = segments[0].insertAfterId
+  let bestDistance = Number.POSITIVE_INFINITY
+
+  for (const segment of segments) {
+    const distance = getDistanceToPolyline(latlng, segment.geometry)
+    if (distance < bestDistance) {
+      bestDistance = distance
+      bestInsertAfterId = segment.insertAfterId
+    }
+  }
+
+  return bestInsertAfterId
+}
+
+function getDistanceToPolyline(latlng, points) {
+  if (!points.length) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  if (points.length === 1) {
+    return haversineDistance({ lat: latlng.lat, lon: latlng.lng }, points[0])
+  }
+
+  let bestDistance = Number.POSITIVE_INFINITY
+
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const distance = getDistanceToLineSegment(
+      { lat: latlng.lat, lon: latlng.lng },
+      points[index],
+      points[index + 1],
+    )
+    if (distance < bestDistance) {
+      bestDistance = distance
+    }
+  }
+
+  return bestDistance
+}
+
+function getDistanceToLineSegment(point, start, end) {
+  const x = point.lon
+  const y = point.lat
+  const x1 = start.lon
+  const y1 = start.lat
+  const x2 = end.lon
+  const y2 = end.lat
+  const dx = x2 - x1
+  const dy = y2 - y1
+
+  if (dx === 0 && dy === 0) {
+    return haversineDistance(point, start)
+  }
+
+  const projection = ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy)
+  const clamped = Math.max(0, Math.min(1, projection))
+
+  return haversineDistance(point, {
+    lat: y1 + dy * clamped,
+    lon: x1 + dx * clamped,
+  })
+}
+
+async function fetchRouteSegment(from, to, profile, signal) {
+  const profileName = ['cycling', 'walking', 'driving'].includes(profile) ? profile : 'cycling'
+  const coordinates = `${from.lon},${from.lat};${to.lon},${to.lat}`
+  const params = new URLSearchParams({
+    overview: 'full',
+    geometries: 'geojson',
+    steps: 'false',
+    continue_straight: 'true',
+  })
+
+  let response
+  try {
+    response = await fetch(`https://router.project-osrm.org/route/v1/${profileName}/${coordinates}?${params.toString()}`, {
+      signal,
+    })
+  }
+  catch (networkError) {
+    const detail = networkError instanceof Error ? networkError.message : 'network error'
+    throw new Error(`Routing service is unreachable: ${detail}`, {
+      cause: networkError,
+    })
+  }
+
+  if (!response.ok) {
+    throw new Error(`Routing service returned ${response.status}.`)
+  }
+
+  const data = await response.json()
+  const route = Array.isArray(data.routes) ? data.routes[0] : null
+  const routeCoordinates = route?.geometry?.coordinates
+
+  if (!route || !Array.isArray(routeCoordinates) || routeCoordinates.length < 2) {
+    throw new Error('No routable street path was found for one of the route segments.')
+  }
+
+  return {
+    mode: 'routed',
+    geometry: routeCoordinates.map((coordinate) => ({
+      lat: coordinate[1],
+      lon: coordinate[0],
+    })),
+    distanceMeters: Number.isFinite(route.distance) ? route.distance : getPolylineLength([
+      { lat: from.lat, lon: from.lon },
+      { lat: to.lat, lon: to.lon },
+    ]),
+  }
+}
+
+function buildDirectSegment(from, to) {
+  const geometry = [
+    { lat: from.lat, lon: from.lon },
+    { lat: to.lat, lon: to.lon },
+  ]
+
+  return {
+    mode: 'direct',
+    geometry,
+    distanceMeters: getPolylineLength(geometry),
+  }
+}
+
+function appendSegmentGeometry(currentGeometry, nextGeometry) {
+  if (!currentGeometry.length) {
+    return [...nextGeometry]
+  }
+
+  return [...currentGeometry, ...nextGeometry.slice(1)]
+}
+
+function buildExportTrack(track, removedSegmentSamples, routeGeometry, rebuildDirection) {
+  if (!track) {
+    throw new Error('No track loaded.')
+  }
+
+  if (!removedSegmentSamples.length || routeGeometry.length < 2 || !rebuildDirection) {
+    return track
+  }
+
+  if (rebuildDirection === 'before') {
+    const anchorSample = track.samples[0]
+    const repairedStart = rebuildSegmentSamples(anchorSample, removedSegmentSamples, routeGeometry, 'before')
+
+    return finalizeTrack({
+      ...track,
+      name: `${track.name}-cleaned`,
+      samples: [...repairedStart, ...track.samples],
+    })
+  }
+
+  const anchorSample = track.samples[track.samples.length - 1]
+  const repairedTail = rebuildSegmentSamples(anchorSample, removedSegmentSamples, routeGeometry, 'after')
+
+  return finalizeTrack({
+    ...track,
+    name: `${track.name}-cleaned`,
+    samples: [...track.samples, ...repairedTail],
+  })
+}
+
+async function correctTrackElevation(track) {
+  const correctedElevations = await fetchElevationProfile(track.points)
+  const nextSamples = track.samples.map((sample) => ({ ...sample }))
+
+  track.points.forEach((point, index) => {
+    const nextElevation = correctedElevations[index]
+    if (Number.isFinite(nextElevation)) {
+      nextSamples[point.sampleIndex] = {
+        ...nextSamples[point.sampleIndex],
+        ele: nextElevation,
+      }
+    }
+  })
+
+  return finalizeTrack({
+    ...track,
+    samples: nextSamples,
+  })
+}
+
+async function fetchElevationProfile(points) {
+  const batchSize = 250
+  const elevations = []
+
+  for (let offset = 0; offset < points.length; offset += batchSize) {
+    const batch = points.slice(offset, offset + batchSize)
+    const locations = batch
+      .map((point) => `${roundCoordinate(point.lat)},${roundCoordinate(point.lon)}`)
+      .join('|')
+
+    const params = new URLSearchParams({
+      locations,
+      interpolation: 'cubic',
+    })
+
+    let response
+    try {
+      response = await fetch(`https://api.opentopodata.org/v1/mapzen?${params.toString()}`, {
+        method: 'GET',
+      })
+    }
+    catch (networkError) {
+      const detail = networkError instanceof Error ? networkError.message : 'network error'
+      throw new Error(`Terrain service is unreachable: ${detail}`, {
+        cause: networkError,
+      })
+    }
+
+    if (!response.ok) {
+      throw new Error(`Terrain service returned ${response.status}.`)
+    }
+
+    const data = await response.json()
+    if (data.status !== 'OK' || !Array.isArray(data.results)) {
+      throw new Error('Could not get elevation data from the terrain service.')
+    }
+
+    data.results.forEach((item) => {
+      elevations.push(Number.isFinite(item.elevation) ? item.elevation : null)
+    })
+  }
+
+  return elevations
+}
+
+function rebuildSegmentSamples(anchorSample, segmentSamples, routeGeometry, rebuildDirection) {
+  if (!segmentSamples.length) {
+    return []
+  }
+
+  const ratios = getSegmentProgressRatios(anchorSample, segmentSamples, rebuildDirection)
+  return segmentSamples.map((sample, index) => {
+    const point = getPointOnPolyline(routeGeometry, ratios[index])
+    return {
+      ...sample,
+      lat: point.lat,
+      lon: point.lon,
+    }
+  })
+}
+
+function getSegmentProgressRatios(anchorSample, segmentSamples, rebuildDirection) {
+  const allSamples = [anchorSample, ...segmentSamples]
+  const lastSegmentSample = segmentSamples[segmentSamples.length - 1]
+  const firstSegmentSample = segmentSamples[0]
+
+  if (
+    Number.isFinite(anchorSample?.distance) &&
+    (
+      (rebuildDirection === 'after' &&
+        Number.isFinite(lastSegmentSample?.distance) &&
+        lastSegmentSample.distance > anchorSample.distance) ||
+      (rebuildDirection === 'before' &&
+        Number.isFinite(firstSegmentSample?.distance) &&
+        anchorSample.distance > firstSegmentSample.distance)
+    )
+  ) {
+    const totalDistance = rebuildDirection === 'before'
+      ? anchorSample.distance - firstSegmentSample.distance
+      : lastSegmentSample.distance - anchorSample.distance
+    return segmentSamples.map((sample, index) => {
+      const delta = Number.isFinite(sample.distance)
+        ? (rebuildDirection === 'before'
+            ? sample.distance - firstSegmentSample.distance
+            : sample.distance - anchorSample.distance)
+        : ((index + 1) / segmentSamples.length) * totalDistance
+      return clamp01(delta / totalDistance)
+    })
+  }
+
+  const segmentStartTime = firstSegmentSample?.time ? new Date(firstSegmentSample.time).getTime() : null
+  const anchorTime = anchorSample?.time ? new Date(anchorSample.time).getTime() : null
+  const segmentEndTime = lastSegmentSample?.time ? new Date(lastSegmentSample.time).getTime() : null
+
+  if (
+    rebuildDirection === 'before' &&
+    Number.isFinite(segmentStartTime) &&
+    Number.isFinite(anchorTime) &&
+    anchorTime > segmentStartTime
+  ) {
+    const totalTime = anchorTime - segmentStartTime
+    return segmentSamples.map((sample, index) => {
+      const sampleTime = sample.time ? new Date(sample.time).getTime() : null
+      const value = Number.isFinite(sampleTime)
+        ? sampleTime - segmentStartTime
+        : ((index + 1) / segmentSamples.length) * totalTime
+      return clamp01(value / totalTime)
+    })
+  }
+
+  if (
+    rebuildDirection === 'after' &&
+    Number.isFinite(anchorTime) &&
+    Number.isFinite(segmentEndTime) &&
+    segmentEndTime > anchorTime
+  ) {
+    const totalTime = segmentEndTime - anchorTime
+    return segmentSamples.map((sample, index) => {
+      const sampleTime = sample.time ? new Date(sample.time).getTime() : null
+      const value = Number.isFinite(sampleTime)
+        ? sampleTime - anchorTime
+        : ((index + 1) / segmentSamples.length) * totalTime
+      return clamp01(value / totalTime)
+    })
+  }
+
+  return allSamples.slice(1).map((_, index) => (index + 1) / segmentSamples.length)
 }
 
 async function loadTrack(file) {
@@ -577,7 +1379,7 @@ async function loadTrack(file) {
     return readFitFile(file)
   }
 
-  throw new Error('Поддерживаются только файлы GPX и FIT.')
+  throw new Error('Only GPX and FIT files are supported.')
 }
 
 async function readGpxFile(file) {
@@ -587,25 +1389,30 @@ async function readGpxFile(file) {
   const feature = geoJson.features.find((item) => item.geometry?.type === 'LineString')
 
   if (!feature) {
-    throw new Error('В GPX не найден трек с координатами.')
+    throw new Error('No track geometry was found in the GPX file.')
   }
 
   const coordinates = feature.geometry.coordinates
   const times = feature.properties?.coordinateProperties?.times ?? []
   const elevations = feature.properties?.coordinateProperties?.ele ?? []
 
-  const points = coordinates.map((coordinate, index) => ({
+  const samples = coordinates.map((coordinate, index) => ({
     lat: coordinate[1],
     lon: coordinate[0],
     ele: coordinate[2] ?? elevations[index] ?? null,
     time: times[index] ?? null,
     speed: null,
+    distance: null,
+    heartRate: readHeartRateFromGpx(xml, index),
+    cadence: null,
+    power: null,
+    temperature: null,
   }))
 
   return finalizeTrack({
     name: file.name.replace(/\.gpx$/i, ''),
     format: 'gpx',
-    points,
+    samples,
   })
 }
 
@@ -622,100 +1429,176 @@ async function readFitFile(file) {
   const data = await fitParser.parseAsync(new Uint8Array(buffer))
   const records = Array.isArray(data.records) ? data.records : []
 
-  const points = records
-    .filter((record) => Number.isFinite(record.position_lat) && Number.isFinite(record.position_long))
-    .map((record) => ({
-      lat: normalizeFitCoordinate(record.position_lat),
-      lon: normalizeFitCoordinate(record.position_long),
-      ele: Number.isFinite(record.altitude) ? record.altitude : null,
-      time: record.timestamp ? new Date(record.timestamp).toISOString() : null,
-      speed: Number.isFinite(record.speed) ? record.speed : null,
-    }))
+  const samples = records.map((record) => ({
+    lat: Number.isFinite(record.position_lat) ? normalizeFitCoordinate(record.position_lat) : null,
+    lon: Number.isFinite(record.position_long) ? normalizeFitCoordinate(record.position_long) : null,
+    ele: Number.isFinite(record.altitude) ? record.altitude : null,
+    time: record.timestamp ? new Date(record.timestamp).toISOString() : null,
+    speed: Number.isFinite(record.speed) ? record.speed : null,
+    distance: Number.isFinite(record.distance) ? record.distance : null,
+    heartRate: Number.isFinite(record.heart_rate) ? record.heart_rate : null,
+    cadence: Number.isFinite(record.cadence) ? record.cadence : null,
+    power: Number.isFinite(record.power) ? record.power : null,
+    temperature: Number.isFinite(record.temperature) ? record.temperature : null,
+  }))
 
-  if (!points.length) {
-    throw new Error('В FIT не найдено GPS-точек.')
+  if (!samples.some((sample) => Number.isFinite(sample.lat) && Number.isFinite(sample.lon))) {
+    throw new Error('No valid GPS points were found in the FIT file.')
   }
 
   return finalizeTrack({
     name: file.name.replace(/\.fit$/i, ''),
     format: 'fit',
-    points,
+    samples,
   })
 }
 
 function finalizeTrack(track) {
-  const points = track.points.filter(
-    (point) => Number.isFinite(point.lat) && Number.isFinite(point.lon),
-  )
+  const samples = (track.samples ?? []).map((sample) => ({
+    ...sample,
+    heartRate: Number.isFinite(sample.heartRate) ? sample.heartRate : null,
+    distance: Number.isFinite(sample.distance) ? sample.distance : null,
+    speed: Number.isFinite(sample.speed) ? sample.speed : null,
+    ele: Number.isFinite(sample.ele) ? sample.ele : null,
+    cadence: Number.isFinite(sample.cadence) ? sample.cadence : null,
+    power: Number.isFinite(sample.power) ? sample.power : null,
+    temperature: Number.isFinite(sample.temperature) ? sample.temperature : null,
+  }))
+
+  const points = samples
+    .map((sample, sampleIndex) => (
+      Number.isFinite(sample.lat) && Number.isFinite(sample.lon)
+        ? { ...sample, sampleIndex }
+        : null
+    ))
+    .filter(Boolean)
 
   if (points.length < 2) {
-    throw new Error('В треке слишком мало валидных точек для редактирования.')
+    throw new Error('The track does not have enough valid GPS points.')
   }
+
+  const pointSegments = buildPointSegments(points)
 
   return {
     ...track,
+    samples,
     points,
-    distanceMeters: points.slice(1).reduce((total, point, index) => total + haversineDistance(points[index], point), 0),
+    pointSegments,
+    distanceMeters: pointSegments.reduce((total, segment) => total + getPolylineLength(segment), 0),
   }
+}
+
+function buildPointSegments(points) {
+  if (!points.length) {
+    return []
+  }
+
+  return [points]
 }
 
 function buildGpx(track) {
   const trackName = escapeXml(track.name || 'Fixed Track')
-  const pointsXml = track.points
-    .map((point) => {
-      const ele = point.ele !== null && point.ele !== undefined ? `<ele>${point.ele}</ele>` : ''
-      const time = point.time ? `<time>${escapeXml(point.time)}</time>` : ''
-      return `<trkpt lat="${point.lat}" lon="${point.lon}">${ele}${time}</trkpt>`
+  const pointSegments = track.pointSegments ?? buildPointSegments(track.points ?? [])
+  const segmentsXml = pointSegments
+    .map((segment) => {
+      const pointsXml = segment
+        .map((point) => {
+          const ele = point.ele !== null && point.ele !== undefined ? `<ele>${point.ele}</ele>` : ''
+          const time = point.time ? `<time>${escapeXml(point.time)}</time>` : ''
+          const extensions = buildTrackPointExtensions(point)
+          return `<trkpt lat="${point.lat}" lon="${point.lon}">${ele}${time}${extensions}</trkpt>`
+        })
+        .join('')
+
+      return `<trkseg>${pointsXml}</trkseg>`
     })
     .join('')
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="Fix Your Track" xmlns="http://www.topografix.com/GPX/1/1">
+<gpx version="1.1" creator="Fix Your Track" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1" xmlns:fixtrack="https://fixyourtrack.local/extensions/v1">
   <trk>
     <name>${trackName}</name>
-    <trkseg>${pointsXml}</trkseg>
+    ${segmentsXml}
   </trk>
 </gpx>`
 }
 
-function buildRepairedSegment(sourcePoints, handles) {
-  const targetCount = getRepairPointCount(sourcePoints, handles)
+function buildTrackPointExtensions(point) {
+  const extensionFields = []
+  const customFields = []
 
-  if (targetCount <= 1) {
-    return handles.slice(0, 1)
+  if (Number.isFinite(point.heartRate)) {
+    extensionFields.push(`<gpxtpx:hr>${Math.round(point.heartRate)}</gpxtpx:hr>`)
   }
 
-  return Array.from({ length: targetCount }, (_, index) => {
-    const ratio = index / (targetCount - 1)
-    const geometryPoint = getPointOnPolyline(handles, ratio)
-    const profilePoint = getProfilePoint(sourcePoints, ratio)
+  if (Number.isFinite(point.speed)) {
+    extensionFields.push(`<gpxtpx:speed>${point.speed}</gpxtpx:speed>`)
+  }
 
-    return {
-      lat: geometryPoint.lat,
-      lon: geometryPoint.lon,
-      ele: profilePoint.ele,
-      time: profilePoint.time,
-      speed: profilePoint.speed,
-    }
-  })
+  if (Number.isFinite(point.cadence)) {
+    extensionFields.push(`<gpxtpx:cad>${Math.round(point.cadence)}</gpxtpx:cad>`)
+  }
+
+  if (Number.isFinite(point.temperature)) {
+    extensionFields.push(`<gpxtpx:atemp>${point.temperature}</gpxtpx:atemp>`)
+  }
+
+  if (Number.isFinite(point.power)) {
+    customFields.push(`<fixtrack:power>${Math.round(point.power)}</fixtrack:power>`)
+  }
+
+  if (!extensionFields.length && !customFields.length) {
+    return ''
+  }
+
+  const parts = []
+
+  if (extensionFields.length) {
+    parts.push(`<gpxtpx:TrackPointExtension>${extensionFields.join('')}</gpxtpx:TrackPointExtension>`)
+  }
+
+  if (customFields.length) {
+    parts.push(customFields.join(''))
+  }
+
+  return `<extensions>${parts.join('')}</extensions>`
 }
 
-function getRepairPointCount(sourcePoints, handles) {
-  const handleLength = getPolylineLength(handles)
-  const timeGap = getSecondsBetween(sourcePoints[0]?.time, sourcePoints[sourcePoints.length - 1]?.time)
-  const countByDistance = Math.max(2, Math.round(handleLength / 20) + 1)
-  const countByTime = timeGap ? Math.max(2, Math.round(timeGap) + 1) : 0
-  return Math.min(2000, Math.max(sourcePoints.length, handles.length, countByDistance, countByTime))
-}
-
-function getPolylineLength(points) {
-  let totalLength = 0
+function getSuspiciousSegments(points) {
+  const segments = []
 
   for (let index = 0; index < points.length - 1; index += 1) {
-    totalLength += haversineDistance(points[index], points[index + 1])
+    const current = points[index]
+    const next = points[index + 1]
+    const distance = haversineDistance(current, next)
+    const seconds = getSecondsBetween(current.time, next.time)
+    const calcSpeedKmh = seconds > 0 ? (distance / seconds) * 3.6 : null
+    const deviceSpeedKmh = maxSpeedKmh(current.speed, next.speed)
+    const likelySignalLoss =
+      distance >= 120 &&
+      (
+        seconds === null ||
+        (seconds >= 30 && distance >= 120) ||
+        (seconds >= 120 && distance >= 60) ||
+        (calcSpeedKmh !== null && calcSpeedKmh > 42) ||
+        (deviceSpeedKmh !== null && deviceSpeedKmh < 12 && distance > 180)
+      )
+
+    if (likelySignalLoss) {
+      segments.push({
+        startIndex: index,
+        endIndex: index + 1,
+        startSampleIndex: current.sampleIndex,
+        endSampleIndex: next.sampleIndex,
+        distance,
+        seconds,
+        calcSpeedKmh,
+        deviceSpeedKmh,
+      })
+    }
   }
 
-  return totalLength
+  return segments
 }
 
 function getPointOnPolyline(points, ratio) {
@@ -729,7 +1612,6 @@ function getPointOnPolyline(points, ratio) {
   }
 
   const totalLength = getPolylineLength(points)
-
   if (totalLength === 0) {
     return { lat: points[0].lat, lon: points[0].lon }
   }
@@ -756,50 +1638,40 @@ function getPointOnPolyline(points, ratio) {
   return { lat: lastPoint.lat, lon: lastPoint.lon }
 }
 
-function getProfilePoint(sourcePoints, ratio) {
-  const start = sourcePoints[0]
-  const end = sourcePoints[sourcePoints.length - 1]
-  const fallbackPoint = sourcePoints[Math.min(sourcePoints.length - 1, Math.round(ratio * (sourcePoints.length - 1)))]
+function getPolylineLength(points) {
+  let totalLength = 0
 
-  return {
-    ele: interpolateNumber(start?.ele, end?.ele, ratio, fallbackPoint?.ele ?? null),
-    time: interpolateTime(start?.time, end?.time, ratio, fallbackPoint?.time ?? null),
-    speed: interpolateNumber(start?.speed, end?.speed, ratio, fallbackPoint?.speed ?? null),
+  for (let index = 0; index < points.length - 1; index += 1) {
+    totalLength += haversineDistance(points[index], points[index + 1])
   }
+
+  return totalLength
 }
 
-function interpolateNumber(start, end, ratio, fallbackValue = null) {
-  if (Number.isFinite(start) && Number.isFinite(end)) {
-    return start + (end - start) * ratio
+function getBounds(points) {
+  if (!points.length) {
+    return null
   }
 
-  if (Number.isFinite(start)) {
-    return start
+  let south = points[0].lat
+  let north = points[0].lat
+  let west = points[0].lon
+  let east = points[0].lon
+
+  for (const point of points) {
+    south = Math.min(south, point.lat)
+    north = Math.max(north, point.lat)
+    west = Math.min(west, point.lon)
+    east = Math.max(east, point.lon)
   }
 
-  if (Number.isFinite(end)) {
-    return end
-  }
-
-  return fallbackValue
+  return [
+    [south, west],
+    [north, east],
+  ]
 }
 
-function interpolateTime(start, end, ratio, fallbackValue = null) {
-  if (!start || !end) {
-    return fallbackValue
-  }
-
-  const startMs = new Date(start).getTime()
-  const endMs = new Date(end).getTime()
-
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
-    return fallbackValue
-  }
-
-  return new Date(startMs + (endMs - startMs) * ratio).toISOString()
-}
-
-function findNearestPointIndex(points, latlng) {
+function findNearestPointIndex(points, latlng, maxDistanceMeters = 100) {
   let bestIndex = null
   let bestDistance = Number.POSITIVE_INFINITY
 
@@ -811,99 +1683,7 @@ function findNearestPointIndex(points, latlng) {
     }
   }
 
-  return bestDistance <= 250 ? bestIndex : null
-}
-
-function getLongestSegmentIndex(points) {
-  let longest = 0
-  let index = 0
-
-  for (let itemIndex = 0; itemIndex < points.length - 1; itemIndex += 1) {
-    const distance = haversineDistance(points[itemIndex], points[itemIndex + 1])
-    if (distance > longest) {
-      longest = distance
-      index = itemIndex
-    }
-  }
-
-  return index
-}
-
-function getClosestHandleSegmentIndex(points, target) {
-  let bestIndex = 0
-  let bestDistance = Number.POSITIVE_INFINITY
-
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const distance = distanceToSegment(target, points[index], points[index + 1])
-    if (distance < bestDistance) {
-      bestDistance = distance
-      bestIndex = index
-    }
-  }
-
-  return bestIndex
-}
-
-function distanceToSegment(point, start, end) {
-  const x = point.lon
-  const y = point.lat
-  const x1 = start.lon
-  const y1 = start.lat
-  const x2 = end.lon
-  const y2 = end.lat
-  const dx = x2 - x1
-  const dy = y2 - y1
-
-  if (dx === 0 && dy === 0) {
-    return haversineDistance(point, start)
-  }
-
-  const projection = ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy)
-  const clamped = Math.max(0, Math.min(1, projection))
-
-  return haversineDistance(point, {
-    lat: y1 + dy * clamped,
-    lon: x1 + dx * clamped,
-  })
-}
-
-function estimateMidpoint(start, end) {
-  return {
-    lat: (start.lat + end.lat) / 2,
-    lon: (start.lon + end.lon) / 2,
-  }
-}
-
-function createDefaultHandles(track, selection) {
-  const start = track.points[selection.startIndex]
-  const end = track.points[selection.endIndex]
-  const midpoint = estimateMidpoint(start, end)
-
-  return [
-    { lat: start.lat, lon: start.lon },
-    midpoint,
-    { lat: end.lat, lon: end.lon },
-  ]
-}
-
-function maxSpeedKmh(firstSpeed, secondSpeed) {
-  const values = [firstSpeed, secondSpeed].filter(Number.isFinite)
-  if (!values.length) {
-    return null
-  }
-  return Math.max(...values) * 3.6
-}
-
-function normalizeFitCoordinate(value) {
-  if (!Number.isFinite(value)) {
-    return value
-  }
-
-  if (Math.abs(value) <= 180) {
-    return value
-  }
-
-  return (value * 180) / 2147483648
+  return bestDistance <= maxDistanceMeters ? bestIndex : null
 }
 
 function haversineDistance(from, to) {
@@ -924,6 +1704,15 @@ function degreesToRadians(value) {
   return (value * Math.PI) / 180
 }
 
+function maxSpeedKmh(firstSpeed, secondSpeed) {
+  const values = [firstSpeed, secondSpeed].filter(Number.isFinite)
+  if (!values.length) {
+    return null
+  }
+
+  return Math.max(...values) * 3.6
+}
+
 function getSecondsBetween(firstTime, secondTime) {
   if (!firstTime || !secondTime) {
     return null
@@ -939,18 +1728,82 @@ function getSecondsBetween(firstTime, secondTime) {
   return Math.max(0, (secondMs - firstMs) / 1000)
 }
 
-function formatDistance(distanceMeters) {
-  if (distanceMeters >= 1000) {
-    return `${(distanceMeters / 1000).toFixed(2)} км`
+function normalizeFitCoordinate(value) {
+  if (!Number.isFinite(value)) {
+    return value
   }
 
-  return `${Math.round(distanceMeters)} м`
+  if (Math.abs(value) <= 180) {
+    return value
+  }
+
+  return (value * 180) / 2147483648
+}
+
+function readHeartRateFromGpx(xml, index) {
+  const trackPoints = xml.getElementsByTagNameNS('*', 'trkpt')
+  const point = trackPoints[index]
+  if (!point) {
+    return null
+  }
+
+  const hrNode = point.getElementsByTagNameNS('*', 'hr')[0]
+  if (!hrNode) {
+    return null
+  }
+
+  const value = Number.parseFloat(hrNode.textContent ?? '')
+  return Number.isFinite(value) ? value : null
+}
+
+function formatDistance(distanceMeters) {
+  if (!Number.isFinite(distanceMeters)) {
+    return 'unknown'
+  }
+
+  if (distanceMeters >= 1000) {
+    return `${(distanceMeters / 1000).toFixed(2)} km`
+  }
+
+  return `${Math.round(distanceMeters)} m`
+}
+
+function formatDuration(totalSeconds) {
+  if (!Number.isFinite(totalSeconds)) {
+    return 'unknown time'
+  }
+
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = Math.floor(totalSeconds % 60)
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`
+  }
+
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`
+  }
+
+  return `${seconds}s`
+}
+
+function formatLatLon(point) {
+  return `${point.lat.toFixed(5)}, ${point.lon.toFixed(5)}`
+}
+
+function clamp01(value) {
+  return Math.max(0, Math.min(1, value))
+}
+
+function roundCoordinate(value) {
+  return Number.parseFloat(value.toFixed(6))
 }
 
 function sanitizeFilename(name) {
-  return Array.from(name, (char) =>
-    /[<>:"/\\|?*]/.test(char) || char.charCodeAt(0) < 32 ? '-' : char,
-  ).join('')
+  return Array.from(name, (char) => (
+    /[<>:"/\\|?*]/.test(char) || char.charCodeAt(0) < 32 ? '-' : char
+  )).join('')
 }
 
 function escapeXml(value) {
