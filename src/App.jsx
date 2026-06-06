@@ -39,6 +39,7 @@ function App() {
   const [tailAnchorPointIndex, setTailAnchorPointIndex] = useState(null)
   const [removedSegmentSamples, setRemovedSegmentSamples] = useState([])
   const [rebuildDirection, setRebuildDirection] = useState(null)
+  const [middleRepairRange, setMiddleRepairRange] = useState(null)
   const [routeProfile, setRouteProfile] = useState('cycling')
   const [mapMode, setMapMode] = useState('inspect')
   const [endpoint, setEndpoint] = useState(null)
@@ -51,7 +52,7 @@ function App() {
     geometry: [],
     distanceMeters: 0,
   })
-  const [message, setMessage] = useState('Load a GPX or FIT track to start cleaning the broken tail.')
+  const [message, setMessage] = useState('Load a GPX or FIT track to start repairing broken sections.')
   const [error, setError] = useState('')
   const [isExporting, setIsExporting] = useState(false)
   const [correctElevationOnExport, setCorrectElevationOnExport] = useState(false)
@@ -65,15 +66,15 @@ function App() {
   })
 
   const suspiciousSegments = useMemo(() => {
-    if (!sourceTrack) {
+    if (!track) {
       return []
     }
 
-    return getSuspiciousSegments(sourceTrack.points).map((segment) => ({
+    return getSuspiciousSegments(track.points).map((segment) => ({
       ...segment,
       id: `${segment.startIndex}-${segment.endIndex}`,
     }))
-  }, [sourceTrack])
+  }, [track])
 
   const anchorPoint = useMemo(() => {
     if (!track || tailAnchorPointIndex === null) {
@@ -140,7 +141,9 @@ function App() {
 
     const anchorSample = rebuildDirection === 'before'
       ? track?.samples?.[0] ?? null
-      : track?.samples?.[track.samples.length - 1] ?? null
+      : rebuildDirection === 'middle'
+        ? removedSegmentSamples[0] ?? null
+        : track?.samples?.[track.samples.length - 1] ?? null
     if (!anchorSample) {
       return ''
     }
@@ -261,12 +264,13 @@ function App() {
       setTailAnchorPointIndex(null)
       setRemovedSegmentSamples([])
       setRebuildDirection(null)
+      setMiddleRepairRange(null)
       setEndpoint(null)
       setViaPoints([])
       setActiveWaypointId(null)
       setMapMode('inspect')
       setFitRequest((current) => current + 1)
-      setMessage(`Loaded ${file.name}. Click the track line to choose a cut point, then delete before it or after it.`)
+      setMessage(`Loaded ${file.name}. Click a suspicious red section to repair the middle, or click elsewhere on the track to choose a tail cut point.`)
     }
     catch (nextError) {
       setSourceTrack(null)
@@ -275,6 +279,7 @@ function App() {
       setTailAnchorPointIndex(null)
       setRemovedSegmentSamples([])
       setRebuildDirection(null)
+      setMiddleRepairRange(null)
       setEndpoint(null)
       setViaPoints([])
       setActiveWaypointId(null)
@@ -330,6 +335,7 @@ function App() {
     setTailAnchorPointIndex(trimmedTrack.points.length - 1)
     setRemovedSegmentSamples(removedSamples)
     setRebuildDirection('after')
+    setMiddleRepairRange(null)
     setEndpoint(null)
     setViaPoints([])
     setActiveWaypointId(null)
@@ -368,6 +374,7 @@ function App() {
     setTailAnchorPointIndex(0)
     setRemovedSegmentSamples(removedSamples)
     setRebuildDirection('before')
+    setMiddleRepairRange(null)
     setEndpoint(null)
     setViaPoints([])
     setActiveWaypointId(null)
@@ -387,6 +394,7 @@ function App() {
     setTailAnchorPointIndex(null)
     setRemovedSegmentSamples([])
     setRebuildDirection(null)
+    setMiddleRepairRange(null)
     setEndpoint(null)
     setViaPoints([])
     setActiveWaypointId(null)
@@ -394,6 +402,79 @@ function App() {
     setFitRequest((current) => current + 1)
     setError('')
     setMessage('Original track restored. Click the track line to choose a new cut point.')
+  }
+
+  function beginMiddleRepair(segment) {
+    if (!track) {
+      return
+    }
+
+    if (rebuildDirection === 'middle' && middleRepairRange) {
+      setError('Apply or cancel the current middle repair before selecting another suspicious segment.')
+      return
+    }
+
+    const startPoint = track.points[segment.startIndex]
+    const endPoint = track.points[segment.endIndex]
+    if (!startPoint || !endPoint || endPoint.sampleIndex <= startPoint.sampleIndex) {
+      setError('Could not use the detected segment borders.')
+      return
+    }
+
+    setSelectedCutPointIndex(null)
+    setTailAnchorPointIndex(segment.startIndex)
+    setRemovedSegmentSamples(track.samples.slice(startPoint.sampleIndex, endPoint.sampleIndex + 1))
+    setRebuildDirection('middle')
+    setMiddleRepairRange({
+      startSampleIndex: startPoint.sampleIndex,
+      endSampleIndex: endPoint.sampleIndex,
+    })
+    setEndpoint({ lat: endPoint.lat, lon: endPoint.lon })
+    setViaPoints([])
+    setActiveWaypointId(null)
+    setMapMode('inspect')
+    setError('')
+    setMessage('Middle repair active. Click the blue replacement thread to add a waypoint, then drag it until the route matches the real track.')
+  }
+
+  function cancelMiddleRepair() {
+    setTailAnchorPointIndex(null)
+    setRemovedSegmentSamples([])
+    setRebuildDirection(null)
+    setMiddleRepairRange(null)
+    setEndpoint(null)
+    setViaPoints([])
+    setActiveWaypointId(null)
+    setMapMode('inspect')
+    setError('')
+    setMessage('Middle repair cancelled. Select a suspicious jump to edit another interval.')
+  }
+
+  function applyMiddleRepair() {
+    if (!track || !middleRepairRange || effectiveRoutePreview.status !== 'ready') {
+      setError('Wait for the replacement route to finish before applying this repair.')
+      return
+    }
+
+    const repairedTrack = buildExportTrack(
+      track,
+      removedSegmentSamples,
+      effectiveRoutePreview.geometry,
+      rebuildDirection,
+      middleRepairRange,
+    )
+
+    setTrack(repairedTrack)
+    setTailAnchorPointIndex(null)
+    setRemovedSegmentSamples([])
+    setRebuildDirection(null)
+    setMiddleRepairRange(null)
+    setEndpoint(null)
+    setViaPoints([])
+    setActiveWaypointId(null)
+    setMapMode('inspect')
+    setError('')
+    setMessage('Middle segment applied to the working track. Select another suspicious jump or export the cleaned GPX.')
   }
 
   function handleMapClick(latlng) {
@@ -438,6 +519,17 @@ function App() {
     }
 
     if (mapMode === 'add-offgrid-waypoint') {
+      return
+    }
+
+    if (rebuildDirection === 'middle') {
+      setMessage('Middle repair is active. Click the blue replacement thread to add a waypoint, then drag it.')
+      return
+    }
+
+    const suspiciousSegment = findNearestSuspiciousSegment(suspiciousSegments, track.points, latlng, 160)
+    if (suspiciousSegment) {
+      beginMiddleRepair(suspiciousSegment)
       return
     }
 
@@ -515,7 +607,13 @@ function App() {
       setIsExporting(true)
       setError('')
 
-      let exportableTrack = buildExportTrack(track, removedSegmentSamples, effectiveRoutePreview.geometry, rebuildDirection)
+      let exportableTrack = buildExportTrack(
+        track,
+        removedSegmentSamples,
+        effectiveRoutePreview.geometry,
+        rebuildDirection,
+        middleRepairRange,
+      )
 
       if (correctElevationOnExport) {
         setMessage('Correcting elevation from terrain data before export...')
@@ -544,19 +642,23 @@ function App() {
   const activeWaypoint = activeWaypointId
     ? viaPoints.find((point) => point.id === activeWaypointId) ?? null
     : null
-  const hasTrackEdits = Boolean(sourceTrack && track && sourceTrack.samples.length !== track.samples.length)
+  const hasTrackEdits = Boolean(sourceTrack && track && sourceTrack !== track)
   const isPickingEndpoint = mapMode === 'pick-endpoint'
   const isAddingOffGrid = mapMode === 'add-offgrid-waypoint'
-  const endpointLabel = rebuildDirection === 'before' ? 'New start point' : 'New endpoint'
+  const endpointLabel = rebuildDirection === 'before'
+    ? 'New start point'
+    : rebuildDirection === 'middle'
+      ? 'Repair end border'
+      : 'New endpoint'
   const layoutSignature = `${collapsedPanels.track}-${collapsedPanels.suspicious}-${collapsedPanels.rebuild}-${collapsedPanels.waypoints}`
 
   return (
     <div className="app-shell">
       <section className="hero">
         <div className="hero-copy">
-          <p className="eyebrow">FixYourTrack / Tail Rebuild</p>
-          <h1>Rebuild the broken end of a GPS track.</h1>
-          <p className="lead">Trim tail. Place endpoint. Refine route.</p>
+          <p className="eyebrow">FixYourTrack / Route Repair</p>
+          <h1>Repair broken GPS track sections.</h1>
+          <p className="lead">Select damage. Shape route. Apply repair.</p>
         </div>
 
         <div className="hero-actions">
@@ -622,8 +724,8 @@ function App() {
                 <div className="step-box">
                   <div className="step-title">1. Click the track to choose a cut point</div>
                   <p className="muted-text">
-                    Click directly on the recorded track line. Then delete everything before that point or after it.
-                    Whichever side you delete, the kept boundary point becomes the redraw anchor.
+                    Click a suspicious red section to repair it between fixed borders. Click elsewhere on the recorded
+                    track to choose a cut point for deleting everything before or after it.
                   </p>
                   <div className="stack">
                     <button type="button" className="ghost-button" onClick={deleteBeforeCutPoint} disabled={!selectedCutPoint}>
@@ -667,12 +769,17 @@ function App() {
                   <button
                     key={segment.id}
                     type="button"
-                    className={`segment-button ${selectedCutPointIndex === segment.startIndex ? 'segment-button-active' : ''}`}
-                    onClick={() => selectCutPoint(segment.startIndex)}
+                    className={`segment-button ${
+                      middleRepairRange?.startSampleIndex === segment.startSampleIndex &&
+                      middleRepairRange?.endSampleIndex === segment.endSampleIndex
+                        ? 'segment-button-active'
+                        : ''
+                    }`}
+                    onClick={() => beginMiddleRepair(segment)}
                   >
                     <strong>Jump {index + 1}</strong>
                     <span>
-                      Suggested cut near points {segment.startIndex + 1} {'->'} {segment.endIndex + 1}
+                      Repair between fixed points {segment.startIndex + 1} {'->'} {segment.endIndex + 1}
                     </span>
                     <span>
                       {formatDistance(segment.distance)} in {formatDuration(segment.seconds)}
@@ -681,17 +788,17 @@ function App() {
                 ))}
               </div>
             ) : !collapsedPanels.suspicious ? (
-              <p className="muted-text">No obvious spoofed tail was detected automatically.</p>
+              <p className="muted-text">No obvious broken section was detected automatically.</p>
             ) : null}
           </div>
 
           <div className="panel">
             <div className="panel-header">
               <div className="panel-header-main">
-                <h2>Tail rebuild</h2>
+                <h2>{rebuildDirection === 'middle' ? 'Middle repair' : 'Route rebuild'}</h2>
                 {anchorPoint ? <span>routing</span> : null}
               </div>
-              <button type="button" className="panel-toggle" onClick={() => togglePanel('rebuild')} aria-label="Toggle Tail rebuild panel">
+              <button type="button" className="panel-toggle" onClick={() => togglePanel('rebuild')} aria-label="Toggle Route rebuild panel">
                 {collapsedPanels.rebuild ? '+' : '-'}
               </button>
             </div>
@@ -700,7 +807,7 @@ function App() {
               <>
                 <div className="inspector-grid">
                   <div>
-                    <dt>Anchor</dt>
+                    <dt>{rebuildDirection === 'middle' ? 'Start border' : 'Anchor'}</dt>
                     <dd>{formatLatLon(anchorPoint)}</dd>
                   </div>
                   <div>
@@ -708,7 +815,13 @@ function App() {
                     <dd>{removedSegmentSamples.length}</dd>
                   </div>
                   <div>
-                    <dt>{rebuildDirection === 'before' ? 'Start point' : 'Endpoint'}</dt>
+                    <dt>
+                      {rebuildDirection === 'before'
+                        ? 'Start point'
+                        : rebuildDirection === 'middle'
+                          ? 'End border'
+                          : 'Endpoint'}
+                    </dt>
                     <dd>{endpoint ? formatLatLon(endpoint) : 'not set'}</dd>
                   </div>
                   <div>
@@ -748,11 +861,13 @@ function App() {
                 </div>
 
                 <div className="stack">
-                  <button type="button" className="primary-button" onClick={() => setMapMode('pick-endpoint')}>
-                    {endpoint
-                      ? `Move ${rebuildDirection === 'before' ? 'start point' : 'endpoint'} on map`
-                      : `Place ${rebuildDirection === 'before' ? 'start point' : 'endpoint'} on map`}
-                  </button>
+                  {rebuildDirection !== 'middle' ? (
+                    <button type="button" className="primary-button" onClick={() => setMapMode('pick-endpoint')}>
+                      {endpoint
+                        ? `Move ${rebuildDirection === 'before' ? 'start point' : 'endpoint'} on map`
+                        : `Place ${rebuildDirection === 'before' ? 'start point' : 'endpoint'} on map`}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="ghost-button"
@@ -761,6 +876,21 @@ function App() {
                   >
                     {isAddingOffGrid ? 'Cancel off-grid placement' : 'Add off-grid waypoint'}
                   </button>
+                  {rebuildDirection === 'middle' ? (
+                    <>
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={applyMiddleRepair}
+                        disabled={effectiveRoutePreview.status !== 'ready'}
+                      >
+                        Apply middle segment
+                      </button>
+                      <button type="button" className="ghost-button" onClick={cancelMiddleRepair}>
+                        Cancel middle repair
+                      </button>
+                    </>
+                  ) : null}
                 </div>
 
                 {effectiveRoutePreview.status === 'loading' ? (
@@ -777,7 +907,7 @@ function App() {
                 {routeWarning ? <div className="note note-warning">{routeWarning}</div> : null}
               </>
             ) : !collapsedPanels.rebuild ? (
-              <p className="muted-text">Delete either side of the cut point to start redrawing from the kept boundary point.</p>
+              <p className="muted-text">Select a suspicious jump for middle repair, or delete either side of a cut point for end repair.</p>
             ) : null}
           </div>
 
@@ -873,8 +1003,8 @@ function App() {
               <Polyline
                 key={`jump-${segment.id}`}
                 positions={[
-                  [sourceTrack.points[segment.startIndex].lat, sourceTrack.points[segment.startIndex].lon],
-                  [sourceTrack.points[segment.endIndex].lat, sourceTrack.points[segment.endIndex].lon],
+                  [track.points[segment.startIndex].lat, track.points[segment.startIndex].lon],
+                  [track.points[segment.endIndex].lat, track.points[segment.endIndex].lon],
                 ]}
                 pathOptions={{ color: '#cf4920', weight: 4, opacity: 0.95, dashArray: '10 8', interactive: false }}
               />
@@ -916,7 +1046,7 @@ function App() {
             {anchorPoint ? (
               <Marker position={[anchorPoint.lat, anchorPoint.lon]} icon={anchorIcon}>
                 <Tooltip direction="top" offset={[0, -10]} permanent>
-                  Last known point
+                  {rebuildDirection === 'middle' ? 'Repair start border' : 'Last known point'}
                 </Tooltip>
               </Marker>
             ) : null}
@@ -925,9 +1055,11 @@ function App() {
               <Marker
                 position={[endpoint.lat, endpoint.lon]}
                 icon={endpointIcon}
-                draggable
+                draggable={rebuildDirection !== 'middle'}
                 eventHandlers={{
-                  dragend: (event) => placeEndpoint(event.target.getLatLng()),
+                  dragend: rebuildDirection !== 'middle'
+                    ? (event) => placeEndpoint(event.target.getLatLng())
+                    : undefined,
                 }}
               >
                 <Tooltip direction="top" offset={[0, -10]} permanent>
@@ -1189,7 +1321,7 @@ function appendSegmentGeometry(currentGeometry, nextGeometry) {
   return [...currentGeometry, ...nextGeometry.slice(1)]
 }
 
-function buildExportTrack(track, removedSegmentSamples, routeGeometry, rebuildDirection) {
+function buildExportTrack(track, removedSegmentSamples, routeGeometry, rebuildDirection, middleRepairRange = null) {
   if (!track) {
     throw new Error('No track loaded.')
   }
@@ -1204,8 +1336,28 @@ function buildExportTrack(track, removedSegmentSamples, routeGeometry, rebuildDi
 
     return finalizeTrack({
       ...track,
-      name: `${track.name}-cleaned`,
+      name: getCleanedTrackName(track.name),
       samples: [...repairedStart, ...track.samples],
+    })
+  }
+
+  if (rebuildDirection === 'middle') {
+    if (!middleRepairRange) {
+      return track
+    }
+
+    const { startSampleIndex, endSampleIndex } = middleRepairRange
+    const segmentSamples = track.samples.slice(startSampleIndex, endSampleIndex + 1)
+    const repairedSegment = rebuildMiddleSegmentSamples(segmentSamples, routeGeometry)
+
+    return finalizeTrack({
+      ...track,
+      name: getCleanedTrackName(track.name),
+      samples: [
+        ...track.samples.slice(0, startSampleIndex),
+        ...repairedSegment,
+        ...track.samples.slice(endSampleIndex + 1),
+      ],
     })
   }
 
@@ -1214,13 +1366,88 @@ function buildExportTrack(track, removedSegmentSamples, routeGeometry, rebuildDi
 
   return finalizeTrack({
     ...track,
-    name: `${track.name}-cleaned`,
+    name: getCleanedTrackName(track.name),
     samples: [...track.samples, ...repairedTail],
   })
 }
 
+function getCleanedTrackName(name) {
+  const baseName = name || 'fixed-track'
+  return baseName.endsWith('-cleaned') ? baseName : `${baseName}-cleaned`
+}
+
+function rebuildMiddleSegmentSamples(segmentSamples, routeGeometry) {
+  if (segmentSamples.length < 2 || routeGeometry.length < 2) {
+    return segmentSamples
+  }
+
+  const progressRatios = getPolylineVertexProgressRatios(routeGeometry)
+  return routeGeometry.map((point, index) => ({
+    ...interpolateSampleAtRatio(segmentSamples, progressRatios[index]),
+    lat: point.lat,
+    lon: point.lon,
+    repairAccepted: true,
+  }))
+}
+
+function interpolateSampleAtRatio(samples, ratio) {
+  const scaledIndex = clamp01(ratio) * (samples.length - 1)
+  const lowerIndex = Math.floor(scaledIndex)
+  const upperIndex = Math.min(samples.length - 1, Math.ceil(scaledIndex))
+  const localRatio = scaledIndex - lowerIndex
+  const lower = samples[lowerIndex]
+  const upper = samples[upperIndex]
+  const nearest = localRatio < 0.5 ? lower : upper
+  const nextSample = { ...nearest }
+
+  for (const field of ['ele', 'speed', 'distance', 'heartRate', 'cadence', 'power', 'temperature']) {
+    nextSample[field] = interpolateNumber(lower[field], upper[field], localRatio)
+  }
+
+  nextSample.time = interpolateTime(lower.time, upper.time, localRatio)
+  return nextSample
+}
+
+function interpolateNumber(from, to, ratio) {
+  if (Number.isFinite(from) && Number.isFinite(to)) {
+    return from + (to - from) * ratio
+  }
+
+  return Number.isFinite(from) ? from : Number.isFinite(to) ? to : null
+}
+
+function interpolateTime(from, to, ratio) {
+  const fromMs = from ? new Date(from).getTime() : null
+  const toMs = to ? new Date(to).getTime() : null
+
+  if (Number.isFinite(fromMs) && Number.isFinite(toMs)) {
+    return new Date(fromMs + (toMs - fromMs) * ratio).toISOString()
+  }
+
+  return from ?? to ?? null
+}
+
+function getPolylineVertexProgressRatios(points) {
+  const totalLength = getPolylineLength(points)
+  if (totalLength <= 0) {
+    return points.map((_, index) => index / Math.max(1, points.length - 1))
+  }
+
+  const ratios = [0]
+  let traversed = 0
+
+  for (let index = 1; index < points.length; index += 1) {
+    traversed += haversineDistance(points[index - 1], points[index])
+    ratios.push(clamp01(traversed / totalLength))
+  }
+
+  return ratios
+}
+
 async function correctTrackElevation(track) {
-  const correctedElevations = await fetchElevationProfile(track.points)
+  const elevationProfile = buildElevationQueryProfile(track.points)
+  const queriedElevations = await fetchElevationProfile(elevationProfile.queryPoints)
+  const correctedElevations = interpolateElevationProfile(elevationProfile, queriedElevations)
   const nextSamples = track.samples.map((sample) => ({ ...sample }))
 
   track.points.forEach((point, index) => {
@@ -1240,48 +1467,167 @@ async function correctTrackElevation(track) {
 }
 
 async function fetchElevationProfile(points) {
-  const batchSize = 250
+  try {
+    return await fetchOpenElevationProfile(points)
+  }
+  catch (primaryError) {
+    try {
+      return await fetchOpenMeteoElevationProfile(points)
+    }
+    catch (fallbackError) {
+      const primaryDetail = primaryError instanceof Error ? primaryError.message : 'primary service failed'
+      const fallbackDetail = fallbackError instanceof Error ? fallbackError.message : 'fallback service failed'
+      throw new Error(`Terrain services are unavailable. ${primaryDetail}. ${fallbackDetail}.`, {
+        cause: fallbackError,
+      })
+    }
+  }
+}
+
+async function fetchOpenElevationProfile(points) {
+  let response
+  try {
+    response = await fetch('https://api.open-elevation.com/api/v1/lookup', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        locations: points.map((point) => ({
+          latitude: roundCoordinate(point.lat),
+          longitude: roundCoordinate(point.lon),
+        })),
+      }),
+    })
+  }
+  catch (networkError) {
+    const detail = networkError instanceof Error ? networkError.message : 'network error'
+    throw new Error(`Primary terrain service is unreachable: ${detail}`, {
+      cause: networkError,
+    })
+  }
+
+  if (!response.ok) {
+    const detail = await readApiError(response)
+    throw new Error(`Primary terrain service returned ${response.status}${detail ? `: ${detail}` : ''}`)
+  }
+
+  const data = await response.json()
+  if (!Array.isArray(data.results) || data.results.length !== points.length) {
+    throw new Error('Primary terrain service returned incomplete elevation data')
+  }
+
+  return data.results.map((result) => (
+    Number.isFinite(result.elevation) ? result.elevation : null
+  ))
+}
+
+async function fetchOpenMeteoElevationProfile(points) {
+  const batchSize = 100
   const elevations = []
 
   for (let offset = 0; offset < points.length; offset += batchSize) {
     const batch = points.slice(offset, offset + batchSize)
-    const locations = batch
-      .map((point) => `${roundCoordinate(point.lat)},${roundCoordinate(point.lon)}`)
-      .join('|')
-
     const params = new URLSearchParams({
-      locations,
-      interpolation: 'cubic',
+      latitude: batch.map((point) => roundCoordinate(point.lat)).join(','),
+      longitude: batch.map((point) => roundCoordinate(point.lon)).join(','),
     })
 
     let response
     try {
-      response = await fetch(`https://api.opentopodata.org/v1/mapzen?${params.toString()}`, {
+      response = await fetch(`https://api.open-meteo.com/v1/elevation?${params.toString()}`, {
         method: 'GET',
       })
     }
     catch (networkError) {
       const detail = networkError instanceof Error ? networkError.message : 'network error'
-      throw new Error(`Terrain service is unreachable: ${detail}`, {
+      throw new Error(`Fallback terrain service is unreachable: ${detail}`, {
         cause: networkError,
       })
     }
 
     if (!response.ok) {
-      throw new Error(`Terrain service returned ${response.status}.`)
+      const detail = await readApiError(response)
+      throw new Error(`Fallback terrain service returned ${response.status}${detail ? `: ${detail}` : ''}`)
     }
 
     const data = await response.json()
-    if (data.status !== 'OK' || !Array.isArray(data.results)) {
-      throw new Error('Could not get elevation data from the terrain service.')
+    if (!Array.isArray(data.elevation) || data.elevation.length !== batch.length) {
+      throw new Error('Fallback terrain service returned incomplete elevation data')
     }
 
-    data.results.forEach((item) => {
-      elevations.push(Number.isFinite(item.elevation) ? item.elevation : null)
+    data.elevation.forEach((elevation) => {
+      elevations.push(Number.isFinite(elevation) ? elevation : null)
     })
   }
 
   return elevations
+}
+
+function buildElevationQueryProfile(points, minimumSpacingMeters = 50, maxQueryPoints = 450) {
+  const pointDistances = [0]
+  let totalDistance = 0
+
+  for (let index = 1; index < points.length; index += 1) {
+    totalDistance += haversineDistance(points[index - 1], points[index])
+    pointDistances.push(totalDistance)
+  }
+
+  const spacingMeters = Math.max(
+    minimumSpacingMeters,
+    totalDistance / Math.max(1, maxQueryPoints - 1),
+  )
+  const queryPoints = [points[0]]
+  const queryPointIndexes = [0]
+  let lastQueryDistance = 0
+
+  for (let index = 1; index < points.length; index += 1) {
+    if (pointDistances[index] - lastQueryDistance >= spacingMeters || index === points.length - 1) {
+      queryPoints.push(points[index])
+      queryPointIndexes.push(index)
+      lastQueryDistance = pointDistances[index]
+    }
+  }
+
+  return {
+    pointDistances,
+    queryPoints,
+    queryPointIndexes,
+  }
+}
+
+function interpolateElevationProfile(profile, queriedElevations) {
+  const { pointDistances, queryPointIndexes } = profile
+  const elevations = new Array(pointDistances.length)
+
+  for (let queryIndex = 0; queryIndex < queryPointIndexes.length - 1; queryIndex += 1) {
+    const startIndex = queryPointIndexes[queryIndex]
+    const endIndex = queryPointIndexes[queryIndex + 1]
+    const startDistance = pointDistances[startIndex]
+    const endDistance = pointDistances[endIndex]
+    const startElevation = queriedElevations[queryIndex]
+    const endElevation = queriedElevations[queryIndex + 1]
+    const distanceDelta = endDistance - startDistance
+
+    for (let pointIndex = startIndex; pointIndex <= endIndex; pointIndex += 1) {
+      const ratio = distanceDelta > 0
+        ? (pointDistances[pointIndex] - startDistance) / distanceDelta
+        : 0
+      elevations[pointIndex] = interpolateNumber(startElevation, endElevation, ratio)
+    }
+  }
+
+  return elevations
+}
+
+async function readApiError(response) {
+  try {
+    const data = await response.json()
+    return typeof data.reason === 'string' ? data.reason : ''
+  }
+  catch {
+    return ''
+  }
 }
 
 function rebuildSegmentSamples(anchorSample, segmentSamples, routeGeometry, rebuildDirection) {
@@ -1570,6 +1916,10 @@ function getSuspiciousSegments(points) {
   for (let index = 0; index < points.length - 1; index += 1) {
     const current = points[index]
     const next = points[index + 1]
+    if (current.repairAccepted && next.repairAccepted) {
+      continue
+    }
+
     const distance = haversineDistance(current, next)
     const seconds = getSecondsBetween(current.time, next.time)
     const calcSpeedKmh = seconds > 0 ? (distance / seconds) * 3.6 : null
@@ -1684,6 +2034,28 @@ function findNearestPointIndex(points, latlng, maxDistanceMeters = 100) {
   }
 
   return bestDistance <= maxDistanceMeters ? bestIndex : null
+}
+
+function findNearestSuspiciousSegment(segments, points, latlng, maxDistanceMeters = 100) {
+  let bestSegment = null
+  let bestDistance = Number.POSITIVE_INFINITY
+  const clickedPoint = { lat: latlng.lat, lon: latlng.lng }
+
+  for (const segment of segments) {
+    const start = points[segment.startIndex]
+    const end = points[segment.endIndex]
+    if (!start || !end) {
+      continue
+    }
+
+    const distance = getDistanceToLineSegment(clickedPoint, start, end)
+    if (distance < bestDistance) {
+      bestDistance = distance
+      bestSegment = segment
+    }
+  }
+
+  return bestDistance <= maxDistanceMeters ? bestSegment : null
 }
 
 function haversineDistance(from, to) {
