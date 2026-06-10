@@ -2,7 +2,7 @@
 
 Local browser tool for repairing GPS tracks after signal loss, GPS drift, spoofing, or coordinate jumps.
 
-Current tester version: **0.10.0**
+Current tester version: **0.10.5**
 
 ## Tester Package
 

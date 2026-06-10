@@ -994,7 +994,7 @@ function App() {
     : rebuildDirection === 'middle'
       ? t('repairEndBorder')
       : t('newEndpointLabel')
-  const layoutSignature = `${collapsedPanels.track}-${collapsedPanels.visualization}-${collapsedPanels.suspicious}-${collapsedPanels.rebuild}-${collapsedPanels.waypoints}-${collapsedPanels.history}`
+  const layoutSignature = `${collapsedPanels.track}-${collapsedPanels.visualization}-${collapsedPanels.suspicious}-${collapsedPanels.rebuild}-${collapsedPanels.waypoints}-${collapsedPanels.history}-${collapsedPanels.settings}`
   const middleStartPointIndex = middleRepairRange && track
     ? track.points.findIndex((point) => point.sampleIndex === middleRepairRange.startSampleIndex)
     : -1
@@ -1006,10 +1006,7 @@ function App() {
     <div className={`app-shell theme-${theme}`}>
       <section className="hero">
         <div className="hero-copy">
-          <p className="eyebrow">
-            {t('appEyebrow')}
-            <span>v{packageMetadata.version}</span>
-          </p>
+          <p className="eyebrow">{t('appEyebrow')}</p>
           <h1>{t('appTitle')}</h1>
           <p className="lead">{t('appLead')}</p>
         </div>
@@ -1033,28 +1030,7 @@ function App() {
               </select>
             </label>
 
-            <button
-              aria-label={theme === 'dark' ? t('useLightTheme') : t('useDarkTheme')}
-              aria-pressed={theme === 'dark'}
-              className="theme-toggle"
-              onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}
-              title={theme === 'dark' ? t('useLightTheme') : t('useDarkTheme')}
-              type="button"
-            >
-              <span className="theme-toggle-track" aria-hidden="true">
-                <span className="theme-toggle-thumb" />
-              </span>
-            </button>
           </div>
-
-          <label className="checkbox-row checkbox-row-compact">
-            <input
-              type="checkbox"
-              checked={correctElevationOnExport}
-              onChange={(event) => setCorrectElevationOnExport(event.target.checked)}
-            />
-            <span>{t('correctElevation')}</span>
-          </label>
 
           <p className="status-text status-text-compact">{message}</p>
           {error ? <p className="error-text">{error}</p> : null}
@@ -1505,6 +1481,59 @@ function App() {
               <p className="muted-text">{t('historyEmpty')}</p>
             ) : null}
           </div>
+
+          <div className="panel">
+            <div className="panel-header">
+              <div className="panel-header-main">
+                <h2>{t('settings')}</h2>
+              </div>
+              <button type="button" className="panel-toggle" onClick={() => togglePanel('settings')} aria-label={t('togglePanel', { panel: t('settings') })}>
+                {collapsedPanels.settings ? '+' : '-'}
+              </button>
+            </div>
+
+            {!collapsedPanels.settings ? (
+              <div className="settings-list">
+                <div className="setting-row">
+                  <div className="setting-copy">
+                    <strong>{t('interfaceTheme')}</strong>
+                    <span>{t('interfaceThemeHelp')}</span>
+                  </div>
+                  <button
+                    aria-label={theme === 'dark' ? t('useLightTheme') : t('useDarkTheme')}
+                    aria-pressed={theme === 'dark'}
+                    className="theme-toggle"
+                    onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}
+                    title={theme === 'dark' ? t('useLightTheme') : t('useDarkTheme')}
+                    type="button"
+                  >
+                    <span className="theme-toggle-track" aria-hidden="true">
+                      <span className="theme-toggle-thumb" />
+                    </span>
+                  </button>
+                </div>
+
+                <label className="setting-row setting-row-checkbox">
+                  <div className="setting-copy">
+                    <strong>{t('correctElevation')}</strong>
+                    <span>{t('correctElevationHelp')}</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={correctElevationOnExport}
+                    onChange={(event) => setCorrectElevationOnExport(event.target.checked)}
+                  />
+                </label>
+
+                <div className="setting-section-gap" aria-hidden="true" />
+
+                <div className="setting-version">
+                  <span>{t('version')}</span>
+                  <strong>{packageMetadata.version}</strong>
+                </div>
+              </div>
+            ) : null}
+          </div>
         </aside>
 
         <div
@@ -1642,6 +1671,7 @@ function getStoredCollapsedPanels() {
     rebuild: false,
     waypoints: false,
     history: false,
+    settings: false,
   }
 
   if (typeof window === 'undefined') {

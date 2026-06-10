@@ -6,6 +6,15 @@ FixYourTrack uses [Semantic Versioning](https://semver.org/):
 - Minor releases (`0.10.0`) contain meaningful feature batches.
 - Version `1.0.0` will mark the first stable release.
 
+## 0.10.5 - 2026-06-10
+
+### Changed
+
+- Added a dedicated Settings panel in the left workspace.
+- Moved the interface-theme toggle, elevation-correction option, and version information out of the header.
+- Added explanations for theme and elevation-correction settings.
+- Visually separated actionable settings from version information.
+
 ## 0.10.0 - 2026-06-10
 
 ### Added

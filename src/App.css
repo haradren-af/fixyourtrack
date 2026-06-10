@@ -141,13 +141,6 @@
   color: var(--accent);
 }
 
-.eyebrow span {
-  padding-left: 8px;
-  border-left: 1px solid rgba(214, 91, 37, 0.32);
-  color: rgba(27, 40, 38, 0.58);
-  letter-spacing: 0.08em;
-}
-
 .hero-copy h1 {
   margin: 0;
   max-width: none;
@@ -744,6 +737,68 @@
   margin-top: 12px;
 }
 
+.settings-list {
+  display: grid;
+  gap: 10px;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid rgba(22, 43, 40, 0.1);
+  border-radius: 3px;
+  background: #fbfaf6;
+}
+
+.setting-row-checkbox {
+  cursor: pointer;
+}
+
+.setting-row-checkbox input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.setting-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.setting-copy strong {
+  color: var(--text-h);
+  font-size: 0.84rem;
+}
+
+.setting-copy span,
+.setting-version span {
+  color: rgba(27, 40, 38, 0.68);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.setting-section-gap {
+  min-height: 10px;
+}
+
+.setting-version {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 12px;
+}
+
+.setting-version strong {
+  color: var(--text-h);
+  font-size: 0.78rem;
+}
+
 .track-charts {
   display: grid;
   gap: 10px;
@@ -1094,6 +1149,7 @@
 .theme-dark .segment-button,
 .theme-dark .quality-card,
 .theme-dark .history-item,
+.theme-dark .setting-row,
 .theme-dark .profile-chart-card {
   border-color: rgba(220, 240, 230, 0.14);
   background: #202c27;
@@ -1114,7 +1170,6 @@
   background: #2b3a34;
 }
 
-.theme-dark .eyebrow span,
 .theme-dark .stats-grid dt,
 .theme-dark .inspector-grid dt,
 .theme-dark .muted-text,
@@ -1124,6 +1179,11 @@
 .theme-dark .chart-hint,
 .theme-dark .chart-selection-hint,
 .theme-dark .chart-stat span {
+  color: #9fb0a8;
+}
+
+.theme-dark .setting-copy span,
+.theme-dark .setting-version span {
   color: #9fb0a8;
 }
 
