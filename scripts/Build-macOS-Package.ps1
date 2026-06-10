@@ -37,7 +37,19 @@ function Install-PortableGo {
     Invoke-WebRequest -Uri "https://go.dev/dl/$goArchiveName" -OutFile $goArchivePath
   }
 
-  $actualSha256 = (Get-FileHash -LiteralPath $goArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+  $stream = [System.IO.File]::OpenRead($goArchivePath)
+  try {
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+      $actualSha256 = [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+      $sha256.Dispose()
+    }
+  }
+  finally {
+    $stream.Dispose()
+  }
   if ($actualSha256 -ne $goArchiveSha256) {
     throw "Portable Go archive checksum mismatch."
   }
