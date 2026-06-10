@@ -12,7 +12,8 @@ $goArchiveName = "$goVersion.windows-amd64.zip"
 $goArchiveSha256 = "3ca8fb4630b07c419cbdd51f754e31363cfcfb83b3a5354d9e895c90be2cc345"
 $toolRoot = Join-Path ([System.IO.Path]::GetTempPath()) "FixYourTrack-Packaging\$goVersion"
 $goArchivePath = Join-Path ([System.IO.Path]::GetTempPath()) "FixYourTrack-Packaging\$goArchiveName"
-$goExe = Join-Path $toolRoot "go\bin\go.exe"
+$portableGoExe = Join-Path $toolRoot "go\bin\go.exe"
+$goExe = $null
 
 function Assert-ReleasePath {
   param([string]$Path)
@@ -25,7 +26,7 @@ function Assert-ReleasePath {
 }
 
 function Install-PortableGo {
-  if (Test-Path $goExe) {
+  if (Test-Path $portableGoExe) {
     return
   }
 
@@ -61,6 +62,20 @@ function Install-PortableGo {
   Expand-Archive -LiteralPath $goArchivePath -DestinationPath $toolRoot
 }
 
+function Resolve-GoExecutable {
+  if ($env:FIXYOURTRACK_GO_EXE -and (Test-Path $env:FIXYOURTRACK_GO_EXE)) {
+    return $env:FIXYOURTRACK_GO_EXE
+  }
+
+  $systemGo = Get-Command "go" -ErrorAction SilentlyContinue
+  if ($systemGo) {
+    return $systemGo.Source
+  }
+
+  Install-PortableGo
+  return $portableGoExe
+}
+
 function Build-Server {
   param(
     [string]$Architecture,
@@ -93,7 +108,7 @@ try {
     throw "Application build failed."
   }
 
-  Install-PortableGo
+  $goExe = Resolve-GoExecutable
   Assert-ReleasePath $packageRoot
   Assert-ReleasePath $zipPath
 
