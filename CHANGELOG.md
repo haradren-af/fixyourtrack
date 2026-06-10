@@ -6,6 +6,18 @@ FixYourTrack uses [Semantic Versioning](https://semver.org/):
 - Minor releases (`0.10.0`) contain meaningful feature batches.
 - Version `1.0.0` will mark the first stable release.
 
+## 0.10.0 - 2026-06-10
+
+### Added
+
+- Persistent light/dark theme toggle in the application header.
+- Automatic operating-system theme preference on first use.
+- Dark styling for application panels, controls, charts, status cards, and map-overlay controls.
+
+### Changed
+
+- Kept scheme and satellite map imagery unchanged when switching application themes.
+
 ## 0.9.0 - 2026-06-10
 
 ### Added

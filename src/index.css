@@ -18,6 +18,15 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+:root[data-theme='dark'] {
+  --bg: #101713;
+  --bg-accent: #101713;
+  --text: #c5d1cb;
+  --text-h: #f1f5f3;
+  --accent: #ff7a3a;
+  color-scheme: dark;
+}
+
 * {
   box-sizing: border-box;
 }

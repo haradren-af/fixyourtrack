@@ -2,7 +2,7 @@
 
 Local browser tool for repairing GPS tracks after signal loss, GPS drift, spoofing, or coordinate jumps.
 
-Current tester version: **0.9.0**
+Current tester version: **0.10.0**
 
 ## Tester Package
 
@@ -27,6 +27,7 @@ Testers do not need Node.js, Python, or additional libraries. They extract the c
 - View speed, heart-rate, and altitude charts.
 - Export repaired tracks to GPX.
 - English and Russian interface.
+- Persistent light and dark application themes without changing the map layer.
 
 ## Development
 

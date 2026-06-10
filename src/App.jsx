@@ -13,6 +13,7 @@ const minimumSidebarWidth = 380
 
 function App() {
   const [language, setLanguage] = useState(getStoredLanguage)
+  const [theme, setTheme] = useState(getStoredTheme)
   const [track, setTrack] = useState(null)
   const [sourceTrack, setSourceTrack] = useState(null)
   const [selectedCutPointIndex, setSelectedCutPointIndex] = useState(null)
@@ -208,6 +209,11 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem('fixyourtrack-language', language)
   }, [language])
+
+  useEffect(() => {
+    window.localStorage.setItem('fixyourtrack-theme', theme)
+    document.documentElement.dataset.theme = theme
+  }, [theme])
 
   useEffect(() => {
     window.localStorage.setItem('fixyourtrack-route-profile', routeProfile)
@@ -997,7 +1003,7 @@ function App() {
     : -1
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell theme-${theme}`}>
       <section className="hero">
         <div className="hero-copy">
           <p className="eyebrow">
@@ -1026,6 +1032,19 @@ function App() {
                 <option value="ru">RU</option>
               </select>
             </label>
+
+            <button
+              aria-label={theme === 'dark' ? t('useLightTheme') : t('useDarkTheme')}
+              aria-pressed={theme === 'dark'}
+              className="theme-toggle"
+              onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}
+              title={theme === 'dark' ? t('useLightTheme') : t('useDarkTheme')}
+              type="button"
+            >
+              <span className="theme-toggle-track" aria-hidden="true">
+                <span className="theme-toggle-thumb" />
+              </span>
+            </button>
           </div>
 
           <label className="checkbox-row checkbox-row-compact">
@@ -1576,6 +1595,19 @@ function getStoredLanguage() {
   }
 
   return window.navigator.language?.toLowerCase().startsWith('ru') ? 'ru' : 'en'
+}
+
+function getStoredTheme() {
+  if (typeof window === 'undefined') {
+    return 'light'
+  }
+
+  const stored = window.localStorage.getItem('fixyourtrack-theme')
+  if (stored === 'light' || stored === 'dark') {
+    return stored
+  }
+
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
 function getStoredRouteProfile() {

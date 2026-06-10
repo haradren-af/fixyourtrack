@@ -81,6 +81,54 @@
   font: inherit;
 }
 
+.theme-toggle {
+  display: grid;
+  width: 50px;
+  min-height: 38px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(22, 43, 40, 0.14);
+  border-radius: 4px;
+  background: #fbfaf6;
+  cursor: pointer;
+}
+
+.theme-toggle-track {
+  position: relative;
+  display: block;
+  width: 30px;
+  height: 16px;
+  border-radius: 999px;
+  background: #c8d4cf;
+  transition: background 160ms ease;
+}
+
+.theme-toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff8ef;
+  box-shadow: 0 1px 2px rgba(17, 17, 17, 0.24);
+  transition: transform 160ms ease, background 160ms ease;
+}
+
+.theme-toggle[aria-pressed='true'] .theme-toggle-track {
+  background: #d65b25;
+}
+
+.theme-toggle[aria-pressed='true'] .theme-toggle-thumb {
+  transform: translateX(14px);
+  background: #18221e;
+}
+
+.theme-toggle:focus-visible {
+  outline: 2px solid rgba(214, 91, 37, 0.52);
+  outline-offset: 2px;
+}
+
 .eyebrow {
   display: flex;
   grid-column: 1 / -1;
@@ -1017,6 +1065,142 @@
 
 .maplibregl-ctrl-attrib {
   font-family: var(--sans);
+}
+
+.theme-dark .hero,
+.theme-dark .panel {
+  border-color: rgba(220, 240, 230, 0.14);
+  background: #18221e;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.34);
+}
+
+.theme-dark .map-panel {
+  border-color: rgba(220, 240, 230, 0.14);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.34);
+}
+
+.theme-dark .hero-copy {
+  border-color: rgba(220, 240, 230, 0.14);
+}
+
+.theme-dark .language-picker,
+.theme-dark .theme-toggle,
+.theme-dark .panel-toggle,
+.theme-dark .stats-grid div,
+.theme-dark .inspector-grid div,
+.theme-dark .step-box,
+.theme-dark .waypoint-box,
+.theme-dark .ghost-button,
+.theme-dark .segment-button,
+.theme-dark .quality-card,
+.theme-dark .history-item,
+.theme-dark .profile-chart-card {
+  border-color: rgba(220, 240, 230, 0.14);
+  background: #202c27;
+  color: var(--text-h);
+}
+
+.theme-dark .language-picker select,
+.theme-dark .field-group select,
+.theme-dark .chart-axis-switch {
+  border-color: rgba(220, 240, 230, 0.14);
+  background: #26342e;
+  color: var(--text-h);
+}
+
+.theme-dark .panel-toggle:hover,
+.theme-dark .ghost-button:hover,
+.theme-dark .segment-button:hover {
+  background: #2b3a34;
+}
+
+.theme-dark .eyebrow span,
+.theme-dark .stats-grid dt,
+.theme-dark .inspector-grid dt,
+.theme-dark .muted-text,
+.theme-dark .segment-button span,
+.theme-dark .history-item span,
+.theme-dark .chart-axis-switch button,
+.theme-dark .chart-hint,
+.theme-dark .chart-selection-hint,
+.theme-dark .chart-stat span {
+  color: #9fb0a8;
+}
+
+.theme-dark .mode-chip,
+.theme-dark .note-neutral {
+  background: rgba(111, 153, 211, 0.14);
+  color: #b9d5f9;
+}
+
+.theme-dark .mode-chip-active,
+.theme-dark .draft-saved,
+.theme-dark .draft-card,
+.theme-dark .note-good,
+.theme-dark .severity-low,
+.theme-dark .quality-ready {
+  color: #83d5bb !important;
+}
+
+.theme-dark .note-warning,
+.theme-dark .severity-medium {
+  color: #efc276 !important;
+}
+
+.theme-dark .note-danger,
+.theme-dark .severity-high,
+.theme-dark .error-text {
+  color: #ff9879 !important;
+}
+
+.theme-dark .note-action {
+  color: #9bbcff;
+}
+
+.theme-dark .segment-button-active {
+  border-color: rgba(255, 122, 58, 0.58);
+  background: rgba(255, 122, 58, 0.13);
+}
+
+.theme-dark .chart-axis-switch .chart-axis-active,
+.theme-dark .primary-button,
+.theme-dark .map-layer-switch .map-layer-button-active {
+  background: #2b796d;
+  color: #f1f7f4;
+}
+
+.theme-dark .chart-grid-line {
+  stroke: rgba(224, 240, 232, 0.14);
+}
+
+.theme-dark .chart-axis-label,
+.theme-dark .chart-unit-label {
+  fill: #9fb0a8;
+}
+
+.theme-dark .chart-stat-grid {
+  border-color: rgba(220, 240, 230, 0.14);
+}
+
+.theme-dark .chart-endpoint-marker circle {
+  stroke: #202c27;
+}
+
+.theme-dark .map-layer-switch,
+.theme-dark .map-marker-label {
+  border-color: rgba(220, 240, 230, 0.16);
+  background: rgba(24, 34, 30, 0.96);
+  color: var(--text-h);
+}
+
+.theme-dark .sidebar-resizer::before {
+  background: rgba(116, 185, 169, 0.28);
+}
+
+.theme-dark .sidebar-resizer:hover::before,
+.theme-dark .sidebar-resizer:focus-visible::before,
+.theme-dark.workspace-resizing .sidebar-resizer::before {
+  background: rgba(116, 185, 169, 0.8);
 }
 
 @media (max-width: 1120px) {
