@@ -12,7 +12,10 @@ dist
 dist-ssr
 *.local
 release
-trackimport/*
+runtime/*.log
+runtime/*.pid
+runtime/*.url
+.vite-dev.*
 
 # Editor directories and files
 .vscode/*

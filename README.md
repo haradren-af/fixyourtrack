@@ -1,45 +1,81 @@
-# Fix Your Track
+# FixYourTrack
 
-Локальный веб-инструмент для ручного ремонта GPS-треков после потери сигнала.
+Local browser tool for repairing GPS tracks after signal loss, GPS drift, spoofing, or coordinate jumps.
 
-## Что уже умеет
+Current tester version: **0.9.0**
 
-- загружать `GPX` и `FIT`
-- показывать трек на карте OpenStreetMap
-- подсвечивать подозрительные разрывы
-- выбирать проблемный участок из списка или кликом по карте
-- перетаскивать контрольные точки и формировать новую линию
-- сохранять исправленный трек в `GPX` для импорта в Strava / Komoot
+## Tester Package
 
-## Запуск
+Stable latest-download links for testers:
+
+- [Download FixYourTrack for Windows](https://github.com/haradren-af/fixyourtrack/releases/latest/download/FixYourTrack-Tester-Windows.zip)
+- [Download FixYourTrack for macOS](https://github.com/haradren-af/fixyourtrack/releases/latest/download/FixYourTrack-Tester-macOS.zip)
+
+The `release` branch publishes these files as a GitHub Release. Development changes do not reach testers until they are intentionally merged or pushed to that branch with a new version number.
+
+Testers do not need Node.js, Python, or additional libraries. They extract the complete folder and double-click the included Start file. The macOS package supports both Apple Silicon and Intel Macs.
+
+## Main Features
+
+- Import GPX and FIT tracks.
+- Detect suspicious GPS losses and coordinate jumps.
+- Repair middle sections between fixed borders.
+- Trim and rebuild a damaged start or end.
+- Shape replacement routes using draggable waypoints.
+- Trace roads or trails missing from the map.
+- Preserve timestamps, heart rate, speed, cadence, power, altitude, and other recorded sensor values during middle repairs.
+- View speed, heart-rate, and altitude charts.
+- Export repaired tracks to GPX.
+- English and Russian interface.
+
+## Development
 
 ```bash
 npm install
 npm run dev
 ```
 
-После запуска Vite открой адрес из консоли, обычно `http://localhost:5173`.
+Checks:
 
-## Portable-запуск в один клик
+```bash
+npm run lint
+npm run build
+```
 
-- запусти [start-fixyourtrack.bat](C:/fixyourtrack/start-fixyourtrack.bat:1)
-- portable-версия поднимет локальный сервер через встроенный PowerShell Windows и откроет браузер
-- для остановки сервера запусти [stop-fixyourtrack.bat](C:/fixyourtrack/stop-fixyourtrack.bat:1)
+Build the tester package:
 
-Portable-режим использует локальный адрес `http://127.0.0.1:4173`.
+```bash
+npm run package:windows
+npm run package:macos
+```
 
-## Как пользоваться
+Or double-click the matching `Build-Windows-Package.cmd` or `Build-macOS-Package.cmd` on the Windows development machine.
 
-1. Нажми `Открыть GPX или FIT`.
-2. Выбери подозрительный участок из списка слева или кликни по треку два раза.
-3. Перетаскивай контрольные точки на карте.
-4. При необходимости добавляй промежуточные точки.
-5. Нажми `Применить исправление`.
-6. Нажми `Скачать исправленный GPX`.
+## Versioning And Releases
 
-## Ограничения текущей версии
+FixYourTrack uses Semantic Versioning while under active development:
 
-- экспорт сейчас только в `GPX`
-- правка участка делается через контрольные точки и интерполяцию между ними
-- данные скорости, времени и высоты сохраняются, но пересчет метрик трека не делается отдельно
-- если конкретный `FIT` пишет координаты в нестандартном виде, может понадобиться дополнительная адаптация парсера под твой велокомпьютер
+- `0.9.1`: fixes and small refinements.
+- `0.10.0`: meaningful feature batch.
+- `1.0.0`: first stable release.
+
+Update `package.json`, `CHANGELOG.md`, and `RELEASE_NOTES.md` before promoting a commit to the `release` branch. The release workflow rejects a version that was already published.
+
+## Privacy And Limitations
+
+- Track files and drafts stay in the browser.
+- Public map, routing, and terrain services receive coordinates required for their features.
+- Routing, satellite imagery, and elevation correction require internet access.
+- Export currently supports GPX only.
+
+---
+
+# FixYourTrack на русском
+
+Локальное браузерное приложение для исправления GPS-треков после потери сигнала, дрейфа GPS, спуфинга или скачков координат.
+
+Готовый архив для тестировщиков:
+
+`release/FixYourTrack-Tester-Windows.zip`
+
+Тестировщикам не нужны Node.js, Python или дополнительные библиотеки. Нужно полностью распаковать папку и дважды нажать `Start FixYourTrack.cmd`.

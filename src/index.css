@@ -1,20 +1,17 @@
 :root {
-  --bg: #cfd8d0;
-  --bg-accent: #e9dfcb;
+  --bg: #d9ded9;
+  --bg-accent: #d9ded9;
   --text: #32423f;
   --text-h: #182523;
   --accent: #d04a14;
-  --sans: 'Segoe UI', 'Trebuchet MS', sans-serif;
-  --heading: Georgia, 'Times New Roman', serif;
+  --sans: 'Segoe UI Variable', 'Segoe UI', sans-serif;
+  --heading: Bahnschrift, 'Arial Narrow', sans-serif;
 
   font-family: var(--sans);
   line-height: 1.5;
   font-weight: 400;
   color: var(--text);
-  background:
-    radial-gradient(circle at top left, rgba(241, 90, 36, 0.16), transparent 26%),
-    radial-gradient(circle at bottom right, rgba(32, 78, 74, 0.14), transparent 30%),
-    linear-gradient(135deg, var(--bg), var(--bg-accent));
+  background: var(--bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -29,16 +26,14 @@ html,
 body,
 #root {
   margin: 0;
+  height: 100%;
   min-height: 100vh;
 }
 
 body {
   min-width: 320px;
-  background:
-    radial-gradient(circle at top left, rgba(241, 90, 36, 0.16), transparent 26%),
-    radial-gradient(circle at bottom right, rgba(32, 78, 74, 0.14), transparent 30%),
-    linear-gradient(135deg, var(--bg), var(--bg-accent));
-  background-attachment: fixed;
+  overflow: hidden;
+  background: var(--bg);
 }
 
 button,

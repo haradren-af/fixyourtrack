@@ -1,0 +1,48 @@
+FixYourTrack tester checklist
+============================
+
+Please test with a COPY of a GPX or FIT activity.
+
+Suggested checks
+1. Load the track and confirm it appears on the map.
+2. Select a detected issue and rebuild the damaged section.
+3. Add, move, and double-click-delete waypoints.
+4. Try direct tracing for a road or trail missing from the map.
+5. Check speed, heart-rate, and altitude graphs when available.
+6. Export the repaired GPX and import it into your usual service.
+
+Useful feedback
+- What file/device produced the track?
+- What did you expect?
+- What happened instead?
+- Which repair step were you performing?
+- A screenshot is helpful.
+
+Privacy reminder
+Track files remain in your browser, but public map, routing, and terrain
+services receive the coordinates required for those features.
+
+
+Памятка тестировщика FixYourTrack
+=================================
+
+Используйте КОПИЮ файла GPX или FIT.
+
+Что проверить
+1. Загрузите трек и убедитесь, что он появился на карте.
+2. Выберите найденную проблему и восстановите повреждённый участок.
+3. Добавьте, переместите и удалите двойным нажатием промежуточные точки.
+4. Попробуйте ручную трассировку для дороги или тропы, которой нет на карте.
+5. Проверьте графики скорости, пульса и высоты, если данные присутствуют.
+6. Экспортируйте исправленный GPX и импортируйте его в привычный сервис.
+
+Что указать в отзыве
+- Каким устройством и в каком формате записан трек?
+- Какой результат ожидался?
+- Что произошло вместо этого?
+- На каком шаге исправления возникла проблема?
+- Приложите снимок экрана, если возможно.
+
+Напоминание о конфиденциальности
+Файлы треков остаются в браузере, но публичные сервисы карт, маршрутизации
+и рельефа получают координаты, необходимые для работы этих функций.

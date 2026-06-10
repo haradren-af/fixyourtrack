@@ -1,38 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CircleMarker, MapContainer, Marker, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
-import L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
 import FitParser from 'fit-file-parser'
 import { gpx as toGeoJsonGpx } from '@tmcw/togeojson'
 import './App.css'
+import { deleteRepairDraft, loadRepairDraft, saveRepairDraft } from './draftStore'
+import { translate } from './i18n'
+import TrackMap from './TrackMap'
+import TrackCharts from './TrackCharts'
+import packageMetadata from '../package.json'
 
 const initialView = [55.751244, 37.618423]
-
-const anchorIcon = L.divIcon({
-  className: 'map-pin map-pin-anchor',
-  iconSize: [18, 18],
-  iconAnchor: [9, 9],
-})
-
-const endpointIcon = L.divIcon({
-  className: 'map-pin map-pin-endpoint',
-  iconSize: [20, 20],
-  iconAnchor: [10, 10],
-})
-
-const viaIcon = L.divIcon({
-  className: 'map-pin map-pin-via',
-  iconSize: [16, 16],
-  iconAnchor: [8, 8],
-})
-
-const offGridIcon = L.divIcon({
-  className: 'map-pin map-pin-offgrid',
-  iconSize: [16, 16],
-  iconAnchor: [8, 8],
-})
+const minimumSidebarWidth = 380
 
 function App() {
+  const [language, setLanguage] = useState(getStoredLanguage)
   const [track, setTrack] = useState(null)
   const [sourceTrack, setSourceTrack] = useState(null)
   const [selectedCutPointIndex, setSelectedCutPointIndex] = useState(null)
@@ -40,7 +20,8 @@ function App() {
   const [removedSegmentSamples, setRemovedSegmentSamples] = useState([])
   const [rebuildDirection, setRebuildDirection] = useState(null)
   const [middleRepairRange, setMiddleRepairRange] = useState(null)
-  const [routeProfile, setRouteProfile] = useState('cycling')
+  const [routeProfile, setRouteProfile] = useState(getStoredRouteProfile)
+  const [mapLayer, setMapLayer] = useState(getStoredMapLayer)
   const [mapMode, setMapMode] = useState('inspect')
   const [endpoint, setEndpoint] = useState(null)
   const [viaPoints, setViaPoints] = useState([])
@@ -52,18 +33,22 @@ function App() {
     geometry: [],
     distanceMeters: 0,
   })
-  const [message, setMessage] = useState('Load a GPX or FIT track to start repairing broken sections.')
+  const [message, setMessage] = useState(() => translate(getStoredLanguage(), 'ready'))
   const [error, setError] = useState('')
   const [isExporting, setIsExporting] = useState(false)
-  const [correctElevationOnExport, setCorrectElevationOnExport] = useState(false)
+  const [correctElevationOnExport, setCorrectElevationOnExport] = useState(getStoredElevationPreference)
   const [fitRequest, setFitRequest] = useState(0)
+  const [repairHistory, setRepairHistory] = useState([])
+  const [availableDraft, setAvailableDraft] = useState(null)
+  const [draftSavedAt, setDraftSavedAt] = useState(null)
   const pendingRouteFitRef = useRef(false)
-  const [collapsedPanels, setCollapsedPanels] = useState({
-    track: false,
-    suspicious: false,
-    rebuild: false,
-    waypoints: false,
-  })
+  const workspaceRef = useRef(null)
+  const sidebarResizeCleanupRef = useRef(null)
+  const [collapsedPanels, setCollapsedPanels] = useState(getStoredCollapsedPanels)
+  const [sidebarWidth, setSidebarWidth] = useState(minimumSidebarWidth)
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false)
+  const [chartHighlightedPoints, setChartHighlightedPoints] = useState([])
+  const t = (key, values) => translate(language, key, values)
 
   const suspiciousSegments = useMemo(() => {
     if (!track) {
@@ -73,8 +58,19 @@ function App() {
     return getSuspiciousSegments(track.points).map((segment) => ({
       ...segment,
       id: `${segment.startIndex}-${segment.endIndex}`,
+      severity: getIssueSeverity(segment),
     }))
   }, [track])
+
+  const nextIssueAfterRepair = useMemo(() => {
+    if (!middleRepairRange) {
+      return null
+    }
+
+    return suspiciousSegments.find((segment) => (
+      segment.startSampleIndex > middleRepairRange.endSampleIndex
+    )) ?? null
+  }, [middleRepairRange, suspiciousSegments])
 
   const anchorPoint = useMemo(() => {
     if (!track || tailAnchorPointIndex === null) {
@@ -112,27 +108,17 @@ function App() {
     ]
   }, [anchorPoint, endpoint, rebuildDirection, viaPoints])
 
-  const effectiveRoutePreview = controlPoints.length
-    ? routePreview
-    : {
-        status: endpoint ? 'idle' : 'empty',
-        error: '',
-        segments: [],
-        geometry: [],
-        distanceMeters: 0,
-      }
-
-  const trackBounds = useMemo(() => {
-    if (!track) {
-      return null
-    }
-
-    const pointsForBounds = effectiveRoutePreview.geometry.length > 1
-      ? [...track.points, ...effectiveRoutePreview.geometry]
-      : track.points
-
-    return getBounds(pointsForBounds)
-  }, [effectiveRoutePreview.geometry, track])
+  const effectiveRoutePreview = useMemo(() => (
+    controlPoints.length
+      ? routePreview
+      : {
+          status: endpoint ? 'idle' : 'empty',
+          error: '',
+          segments: [],
+          geometry: [],
+          distanceMeters: 0,
+        }
+  ), [controlPoints.length, endpoint, routePreview])
 
   const routeWarning = useMemo(() => {
     if (!removedSegmentSamples.length || effectiveRoutePreview.distanceMeters <= 0) {
@@ -171,8 +157,105 @@ function App() {
       return ''
     }
 
-    return `Suggested route is ${formatDistance(effectiveRoutePreview.distanceMeters)}, while removed segment distance was ${formatDistance(recordedTailDistance)}.`
-  }, [effectiveRoutePreview.distanceMeters, rebuildDirection, removedSegmentSamples, track])
+    return translate(language, 'routeWarning', {
+      suggested: formatDistance(effectiveRoutePreview.distanceMeters),
+      recorded: formatDistance(recordedTailDistance),
+    })
+  }, [effectiveRoutePreview.distanceMeters, language, rebuildDirection, removedSegmentSamples, track])
+
+  const repairQuality = useMemo(() => {
+    if (effectiveRoutePreview.status !== 'ready' || effectiveRoutePreview.geometry.length < 2) {
+      return null
+    }
+
+    const removedGeometry = removedSegmentSamples.filter((sample) => (
+      Number.isFinite(sample.lat) && Number.isFinite(sample.lon)
+    ))
+    const removedDistance = removedGeometry.length > 1 ? getPolylineLength(removedGeometry) : 0
+    const differencePercent = removedDistance > 0
+      ? Math.round(((effectiveRoutePreview.distanceMeters - removedDistance) / removedDistance) * 100)
+      : null
+
+    return {
+      directSegments: effectiveRoutePreview.segments.filter((segment) => segment.mode === 'direct').length,
+      differencePercent,
+      largeDetour: differencePercent !== null && differencePercent > 80,
+    }
+  }, [effectiveRoutePreview, removedSegmentSamples])
+
+  const completedRepairs = useMemo(
+    () => countAcceptedRepairGroups(track?.samples ?? []),
+    [track],
+  )
+  const visualizationTrack = useMemo(() => {
+    if (
+      !track ||
+      effectiveRoutePreview.status !== 'ready' ||
+      effectiveRoutePreview.geometry.length < 2
+    ) {
+      return track
+    }
+
+    return buildExportTrack(
+      track,
+      removedSegmentSamples,
+      effectiveRoutePreview.geometry,
+      rebuildDirection,
+      middleRepairRange,
+    )
+  }, [effectiveRoutePreview, middleRepairRange, rebuildDirection, removedSegmentSamples, track])
+
+  useEffect(() => {
+    window.localStorage.setItem('fixyourtrack-language', language)
+  }, [language])
+
+  useEffect(() => {
+    window.localStorage.setItem('fixyourtrack-route-profile', routeProfile)
+  }, [routeProfile])
+
+  useEffect(() => {
+    window.localStorage.setItem('fixyourtrack-map-layer', mapLayer)
+  }, [mapLayer])
+
+  useEffect(() => {
+    window.localStorage.setItem('fixyourtrack-correct-elevation', String(correctElevationOnExport))
+  }, [correctElevationOnExport])
+
+  useEffect(() => {
+    window.localStorage.setItem('fixyourtrack-collapsed-panels', JSON.stringify(collapsedPanels))
+  }, [collapsedPanels])
+
+  useEffect(() => () => sidebarResizeCleanupRef.current?.(), [])
+
+  useEffect(() => {
+    let active = true
+
+    loadRepairDraft()
+      .then((draft) => {
+        if (active && draft) {
+          setAvailableDraft(draft)
+        }
+      })
+      .catch(() => {})
+
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!sourceTrack || !track) {
+      return undefined
+    }
+
+    const timeout = window.setTimeout(() => {
+      saveRepairDraft(sourceTrack, track)
+        .then((savedAt) => setDraftSavedAt(savedAt))
+        .catch(() => {})
+    }, 700)
+
+    return () => window.clearTimeout(timeout)
+  }, [sourceTrack, track])
 
   useEffect(() => {
     if (!controlPoints.length) {
@@ -197,7 +280,7 @@ function App() {
         for (let index = 0; index < controlPoints.length - 1; index += 1) {
           const from = controlPoints[index]
           const to = controlPoints[index + 1]
-          const forceDirect = from.offGrid || to.offGrid
+          const forceDirect = to.offGrid
           const segment = forceDirect
             ? buildDirectSegment(from, to)
             : await fetchRouteSegment(from, to, routeProfile, abortController.signal)
@@ -256,7 +339,7 @@ function App() {
 
     try {
       setError('')
-      setMessage(`Reading ${file.name}...`)
+      setMessage(t('readingFile', { file: file.name }))
       const loadedTrack = await loadTrack(file)
       setSourceTrack(loadedTrack)
       setTrack(loadedTrack)
@@ -269,8 +352,11 @@ function App() {
       setViaPoints([])
       setActiveWaypointId(null)
       setMapMode('inspect')
+      setRepairHistory([])
+      setAvailableDraft(null)
+      setDraftSavedAt(null)
       setFitRequest((current) => current + 1)
-      setMessage(`Loaded ${file.name}. Click a suspicious red section to repair the middle, or click elsewhere on the track to choose a tail cut point.`)
+      setMessage(t('loadedFile', { file: file.name }))
     }
     catch (nextError) {
       setSourceTrack(null)
@@ -285,7 +371,8 @@ function App() {
       setActiveWaypointId(null)
       setMapMode('inspect')
       setError(nextError instanceof Error ? nextError.message : 'Could not read the track file.')
-      setMessage('Track loading failed.')
+      setRepairHistory([])
+      setMessage(t('loadFailed'))
     }
     finally {
       event.target.value = ''
@@ -303,7 +390,7 @@ function App() {
     }
 
     setSelectedCutPointIndex(pointIndex)
-    setMessage(`Cut point selected at point ${pointIndex + 1}. Choose whether to delete everything before it or after it.`)
+    setMessage(t('cutSelected', { point: pointIndex + 1 }))
   }
 
   function deleteAfterCutPoint() {
@@ -321,7 +408,7 @@ function App() {
     const removedSamples = track.samples.slice(anchorSampleIndex + 1)
 
     if (nextSamples.length < 2) {
-      setError('Keep at least two valid points before rebuilding the tail.')
+      setError(t('keepBefore'))
       return
     }
 
@@ -330,6 +417,7 @@ function App() {
       samples: nextSamples,
     })
 
+    pushRepairHistory('deleteAfter', track)
     setTrack(trimmedTrack)
     setSelectedCutPointIndex(trimmedTrack.points.length - 1)
     setTailAnchorPointIndex(trimmedTrack.points.length - 1)
@@ -342,7 +430,7 @@ function App() {
     setMapMode('pick-endpoint')
     setFitRequest((current) => current + 1)
     setError('')
-    setMessage('Everything after the cut point was removed. The selected point is now the redraw anchor. Click the map to place the new end point.')
+    setMessage(t('deletedAfter'))
   }
 
   function deleteBeforeCutPoint() {
@@ -360,7 +448,7 @@ function App() {
     const nextSamples = track.samples.slice(cutSampleIndex)
 
     if (nextSamples.length < 2) {
-      setError('Keep at least two valid points after the cut point.')
+      setError(t('keepAfter'))
       return
     }
 
@@ -369,6 +457,7 @@ function App() {
       samples: nextSamples,
     })
 
+    pushRepairHistory('deleteBefore', track)
     setTrack(trimmedTrack)
     setSelectedCutPointIndex(0)
     setTailAnchorPointIndex(0)
@@ -381,7 +470,7 @@ function App() {
     setMapMode('pick-endpoint')
     setFitRequest((current) => current + 1)
     setError('')
-    setMessage('Everything before the cut point was removed. The selected point is now the redraw anchor. Click the map to place the new start point.')
+    setMessage(t('deletedBefore'))
   }
 
   function restoreOriginalTrack() {
@@ -389,6 +478,7 @@ function App() {
       return
     }
 
+    pushRepairHistory('restore', track)
     setTrack(sourceTrack)
     setSelectedCutPointIndex(null)
     setTailAnchorPointIndex(null)
@@ -401,7 +491,107 @@ function App() {
     setMapMode('inspect')
     setFitRequest((current) => current + 1)
     setError('')
-    setMessage('Original track restored. Click the track line to choose a new cut point.')
+    setMessage(t('originalRestored'))
+  }
+
+  function pushRepairHistory(type, previousTrack, details = {}) {
+    if (!previousTrack) {
+      return
+    }
+
+    setRepairHistory((current) => [
+      ...current.slice(-11),
+      {
+        id: crypto.randomUUID(),
+        type,
+        track: previousTrack,
+        details,
+      },
+    ])
+  }
+
+  function undoLastChange() {
+    const previous = repairHistory[repairHistory.length - 1]
+    if (!previous) {
+      return
+    }
+
+    setTrack(previous.track)
+    setRepairHistory((current) => current.slice(0, -1))
+    setSelectedCutPointIndex(null)
+    setTailAnchorPointIndex(null)
+    setRemovedSegmentSamples([])
+    setRebuildDirection(null)
+    setMiddleRepairRange(null)
+    setEndpoint(null)
+    setViaPoints([])
+    setActiveWaypointId(null)
+    setMapMode('inspect')
+    setError('')
+    setMessage(t('changeUndone'))
+  }
+
+  function changeLanguage(nextLanguage) {
+    setLanguage(nextLanguage)
+    setMessage(translate(
+      nextLanguage,
+      track ? 'loadedFile' : 'ready',
+      track ? { file: track.name } : {},
+    ))
+  }
+
+  function resumeDraft() {
+    if (!availableDraft) {
+      return
+    }
+
+    try {
+      const restoredSource = finalizeTrack(availableDraft.sourceTrack)
+      const restoredWorkingDraft = finalizeTrack(availableDraft.workingTrack)
+      const restoredWorking = areTrackSamplesEquivalent(restoredSource, restoredWorkingDraft)
+        ? restoredSource
+        : restoredWorkingDraft
+
+      setSourceTrack(restoredSource)
+      setTrack(restoredWorking)
+      setSelectedCutPointIndex(null)
+      setTailAnchorPointIndex(null)
+      setRemovedSegmentSamples([])
+      setRebuildDirection(null)
+      setMiddleRepairRange(null)
+      setEndpoint(null)
+      setViaPoints([])
+      setActiveWaypointId(null)
+      setMapMode('inspect')
+      setRepairHistory([])
+      setDraftSavedAt(availableDraft.savedAt)
+      setAvailableDraft(null)
+      setFitRequest((current) => current + 1)
+      setError('')
+      setMessage(t('draftRestored'))
+    }
+    catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : t('loadFailed'))
+    }
+  }
+
+  async function discardDraft() {
+    try {
+      await deleteRepairDraft()
+      setAvailableDraft(null)
+      setDraftSavedAt(null)
+      setMessage(t('draftDiscarded'))
+    }
+    catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : t('loadFailed'))
+    }
+  }
+
+  function repairNextIssue() {
+    const nextIssue = suspiciousSegments[0]
+    if (nextIssue) {
+      beginMiddleRepair(nextIssue)
+    }
   }
 
   function beginMiddleRepair(segment) {
@@ -409,15 +599,15 @@ function App() {
       return
     }
 
-    if (rebuildDirection === 'middle' && middleRepairRange) {
-      setError('Apply or cancel the current middle repair before selecting another suspicious segment.')
+    if (rebuildDirection) {
+      setError(t('finishCurrentRepair'))
       return
     }
 
     const startPoint = track.points[segment.startIndex]
     const endPoint = track.points[segment.endIndex]
     if (!startPoint || !endPoint || endPoint.sampleIndex <= startPoint.sampleIndex) {
-      setError('Could not use the detected segment borders.')
+      setError(t('invalidBorders'))
       return
     }
 
@@ -434,7 +624,7 @@ function App() {
     setActiveWaypointId(null)
     setMapMode('inspect')
     setError('')
-    setMessage('Middle repair active. Click the blue replacement thread to add a waypoint, then drag it until the route matches the real track.')
+    setMessage(t('middleActive'))
   }
 
   function cancelMiddleRepair() {
@@ -447,12 +637,91 @@ function App() {
     setActiveWaypointId(null)
     setMapMode('inspect')
     setError('')
-    setMessage('Middle repair cancelled. Select a suspicious jump to edit another interval.')
+    setMessage(t('middleCancelled'))
+  }
+
+  function extendMiddleRepairToNextIssue() {
+    if (!track || !middleRepairRange || !nextIssueAfterRepair) {
+      return
+    }
+
+    const endPoint = track.points[nextIssueAfterRepair.endIndex]
+    if (!endPoint) {
+      setError(t('invalidBorders'))
+      return
+    }
+
+    setMiddleRepairRange((current) => ({
+      ...current,
+      endSampleIndex: nextIssueAfterRepair.endSampleIndex,
+    }))
+    setRemovedSegmentSamples(track.samples.slice(
+      middleRepairRange.startSampleIndex,
+      nextIssueAfterRepair.endSampleIndex + 1,
+    ))
+    setEndpoint({ lat: endPoint.lat, lon: endPoint.lon })
+    setActiveWaypointId(null)
+    setError('')
+    setMessage(t('middleExtended'))
+  }
+
+  function expandMiddleRepairStart() {
+    if (!track || !middleRepairRange) {
+      return
+    }
+
+    const currentPointIndex = track.points.findIndex((point) => (
+      point.sampleIndex === middleRepairRange.startSampleIndex
+    ))
+    const nextPointIndex = Math.max(0, currentPointIndex - 15)
+    const nextStartPoint = track.points[nextPointIndex]
+    if (currentPointIndex <= 0 || !nextStartPoint) {
+      return
+    }
+
+    setTailAnchorPointIndex(nextPointIndex)
+    setMiddleRepairRange((current) => ({
+      ...current,
+      startSampleIndex: nextStartPoint.sampleIndex,
+    }))
+    setRemovedSegmentSamples(track.samples.slice(
+      nextStartPoint.sampleIndex,
+      middleRepairRange.endSampleIndex + 1,
+    ))
+    setError('')
+    setMessage(t('middleStartExpanded'))
+  }
+
+  function expandMiddleRepairEnd() {
+    if (!track || !middleRepairRange) {
+      return
+    }
+
+    const currentPointIndex = track.points.findIndex((point) => (
+      point.sampleIndex === middleRepairRange.endSampleIndex
+    ))
+    const nextPointIndex = Math.min(track.points.length - 1, currentPointIndex + 15)
+    const nextEndPoint = track.points[nextPointIndex]
+    if (currentPointIndex < 0 || currentPointIndex >= track.points.length - 1 || !nextEndPoint) {
+      return
+    }
+
+    setMiddleRepairRange((current) => ({
+      ...current,
+      endSampleIndex: nextEndPoint.sampleIndex,
+    }))
+    setRemovedSegmentSamples(track.samples.slice(
+      middleRepairRange.startSampleIndex,
+      nextEndPoint.sampleIndex + 1,
+    ))
+    setEndpoint({ lat: nextEndPoint.lat, lon: nextEndPoint.lon })
+    setError('')
+    setMessage(t('middleEndExpanded'))
   }
 
   function applyMiddleRepair() {
     if (!track || !middleRepairRange || effectiveRoutePreview.status !== 'ready') {
-      setError('Wait for the replacement route to finish before applying this repair.')
+      setError(t('waitForRoute'))
       return
     }
 
@@ -464,6 +733,10 @@ function App() {
       middleRepairRange,
     )
 
+    pushRepairHistory('middle', track, {
+      distanceMeters: effectiveRoutePreview.distanceMeters,
+      waypoints: viaPoints.length,
+    })
     setTrack(repairedTrack)
     setTailAnchorPointIndex(null)
     setRemovedSegmentSamples([])
@@ -474,7 +747,7 @@ function App() {
     setActiveWaypointId(null)
     setMapMode('inspect')
     setError('')
-    setMessage('Middle segment applied to the working track. Select another suspicious jump or export the cleaned GPX.')
+    setMessage(t('middleApplied'))
   }
 
   function handleMapClick(latlng) {
@@ -489,7 +762,7 @@ function App() {
 
     if (mapMode === 'add-offgrid-waypoint' && endpoint) {
       addWaypointAtLocation(latlng, true)
-      }
+    }
   }
 
   function placeEndpoint(latlng) {
@@ -500,11 +773,15 @@ function App() {
       setActiveWaypointId(null)
     }
     setMapMode('inspect')
-    pendingRouteFitRef.current = true
+    pendingRouteFitRef.current = isInitialPlacement
     setMessage(
       isInitialPlacement
-        ? `${rebuildDirection === 'before' ? 'Start point' : 'Endpoint'} placed. Click the suggested line to add waypoints, then drag them onto the real street or path.`
-        : `${rebuildDirection === 'before' ? 'Start point' : 'Endpoint'} moved. Existing waypoints were kept and the route was recalculated.`,
+        ? t('endpointPlaced', {
+            point: rebuildDirection === 'before' ? t('startPoint') : t('endpoint'),
+          })
+        : t('endpointMoved', {
+            point: rebuildDirection === 'before' ? t('startPoint') : t('endpoint'),
+          }),
     )
   }
 
@@ -523,7 +800,7 @@ function App() {
     }
 
     if (rebuildDirection === 'middle') {
-      setMessage('Middle repair is active. Click the blue replacement thread to add a waypoint, then drag it.')
+      setMessage(t('clickBlueThread'))
       return
     }
 
@@ -535,7 +812,7 @@ function App() {
 
     const nearestPointIndex = findNearestPointIndex(track.points, latlng, 160)
     if (nearestPointIndex === null) {
-      setMessage('Click closer to the track line to choose a cut point.')
+      setMessage(t('clickCloser'))
       return
     }
 
@@ -561,11 +838,11 @@ function App() {
       return next
     })
     setActiveWaypointId(nextWaypoint.id)
-    setMapMode('inspect')
+    setMapMode(offGrid ? 'add-offgrid-waypoint' : 'inspect')
     setMessage(
       offGrid
-        ? 'Off-grid waypoint added on the nearest route segment. The route will use direct geometry around this point.'
-        : 'Waypoint added. Drag it to refine the rebuilt route.',
+        ? t('offGridAdded')
+        : t('waypointAdded'),
     )
   }
 
@@ -588,7 +865,7 @@ function App() {
   function removeWaypoint(waypointId) {
     setViaPoints((current) => current.filter((point) => point.id !== waypointId))
     setActiveWaypointId((current) => (current === waypointId ? null : current))
-    setMessage('Waypoint removed.')
+    setMessage(t('waypointRemoved'))
   }
 
   function togglePanel(panelKey) {
@@ -596,6 +873,67 @@ function App() {
       ...current,
       [panelKey]: !current[panelKey],
     }))
+  }
+
+  function getMaximumSidebarWidth() {
+    const workspaceWidth = workspaceRef.current?.getBoundingClientRect().width ?? window.innerWidth
+    return Math.max(
+      minimumSidebarWidth,
+      Math.min(window.innerWidth / 2, workspaceWidth - minimumSidebarWidth),
+    )
+  }
+
+  function resizeSidebar(clientX) {
+    const workspaceLeft = workspaceRef.current?.getBoundingClientRect().left ?? 0
+    const nextWidth = Math.max(
+      minimumSidebarWidth,
+      Math.min(clientX - workspaceLeft, getMaximumSidebarWidth()),
+    )
+    setSidebarWidth(Math.round(nextWidth))
+  }
+
+  function handleSidebarResizeStart(event) {
+    event.preventDefault()
+    sidebarResizeCleanupRef.current?.()
+    setIsResizingSidebar(true)
+    resizeSidebar(event.clientX)
+
+    const handlePointerMove = (moveEvent) => resizeSidebar(moveEvent.clientX)
+    const cleanup = () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerEnd)
+      window.removeEventListener('pointercancel', handlePointerEnd)
+      sidebarResizeCleanupRef.current = null
+    }
+    const handlePointerEnd = () => {
+      cleanup()
+      setIsResizingSidebar(false)
+    }
+
+    sidebarResizeCleanupRef.current = cleanup
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerEnd)
+    window.addEventListener('pointercancel', handlePointerEnd)
+  }
+
+  function handleSidebarResizeKeyDown(event) {
+    const step = event.shiftKey ? 50 : 20
+    let nextWidth = sidebarWidth
+
+    if (event.key === 'ArrowLeft') {
+      nextWidth -= step
+    } else if (event.key === 'ArrowRight') {
+      nextWidth += step
+    } else if (event.key === 'Home') {
+      nextWidth = minimumSidebarWidth
+    } else if (event.key === 'End') {
+      nextWidth = getMaximumSidebarWidth()
+    } else {
+      return
+    }
+
+    event.preventDefault()
+    setSidebarWidth(Math.max(minimumSidebarWidth, Math.min(nextWidth, getMaximumSidebarWidth())))
   }
 
   async function exportTrack() {
@@ -616,7 +954,7 @@ function App() {
       )
 
       if (correctElevationOnExport) {
-        setMessage('Correcting elevation from terrain data before export...')
+        setMessage(t('correctingElevation'))
         exportableTrack = await correctTrackElevation(exportableTrack)
       }
 
@@ -628,11 +966,11 @@ function App() {
       link.download = `${sanitizeFilename(exportableTrack.name || 'fixed-track')}.gpx`
       link.click()
       URL.revokeObjectURL(url)
-      setMessage('Cleaned GPX exported.')
+      setMessage(t('exported'))
     }
     catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : 'Export failed.')
-      setMessage('Could not export the repaired track.')
+      setMessage(t('exportFailed'))
     }
     finally {
       setIsExporting(false)
@@ -646,31 +984,48 @@ function App() {
   const isPickingEndpoint = mapMode === 'pick-endpoint'
   const isAddingOffGrid = mapMode === 'add-offgrid-waypoint'
   const endpointLabel = rebuildDirection === 'before'
-    ? 'New start point'
+    ? t('newStartLabel')
     : rebuildDirection === 'middle'
-      ? 'Repair end border'
-      : 'New endpoint'
-  const layoutSignature = `${collapsedPanels.track}-${collapsedPanels.suspicious}-${collapsedPanels.rebuild}-${collapsedPanels.waypoints}`
+      ? t('repairEndBorder')
+      : t('newEndpointLabel')
+  const layoutSignature = `${collapsedPanels.track}-${collapsedPanels.visualization}-${collapsedPanels.suspicious}-${collapsedPanels.rebuild}-${collapsedPanels.waypoints}-${collapsedPanels.history}`
+  const middleStartPointIndex = middleRepairRange && track
+    ? track.points.findIndex((point) => point.sampleIndex === middleRepairRange.startSampleIndex)
+    : -1
+  const middleEndPointIndex = middleRepairRange && track
+    ? track.points.findIndex((point) => point.sampleIndex === middleRepairRange.endSampleIndex)
+    : -1
 
   return (
     <div className="app-shell">
       <section className="hero">
         <div className="hero-copy">
-          <p className="eyebrow">FixYourTrack / Route Repair</p>
-          <h1>Repair broken GPS track sections.</h1>
-          <p className="lead">Select damage. Shape route. Apply repair.</p>
+          <p className="eyebrow">
+            {t('appEyebrow')}
+            <span>v{packageMetadata.version}</span>
+          </p>
+          <h1>{t('appTitle')}</h1>
+          <p className="lead">{t('appLead')}</p>
         </div>
 
         <div className="hero-actions">
           <div className="hero-actions-row">
             <label className="file-picker">
               <input type="file" accept=".gpx,.fit" onChange={handleFileChange} />
-              <span>Load GPX or FIT</span>
+              <span>{t('loadTrack')}</span>
             </label>
 
             <button type="button" className="ghost-button" onClick={exportTrack} disabled={!track || isExporting}>
-              Export cleaned GPX
+              {t('exportGpx')}
             </button>
+
+            <label className="language-picker">
+              <span>{t('language')}</span>
+              <select value={language} onChange={(event) => changeLanguage(event.target.value)}>
+                <option value="en">EN</option>
+                <option value="ru">RU</option>
+              </select>
+            </label>
           </div>
 
           <label className="checkbox-row checkbox-row-compact">
@@ -679,23 +1034,45 @@ function App() {
               checked={correctElevationOnExport}
               onChange={(event) => setCorrectElevationOnExport(event.target.checked)}
             />
-            <span>Correct elevation on export using terrain data</span>
+            <span>{t('correctElevation')}</span>
           </label>
 
           <p className="status-text status-text-compact">{message}</p>
           {error ? <p className="error-text">{error}</p> : null}
+          {track && draftSavedAt ? (
+            <div className="draft-saved">{t('draftSaved')}</div>
+          ) : null}
+          {!track && availableDraft ? (
+            <div className="draft-card">
+              <strong>{t('draftAvailable', {
+                date: formatDraftDate(availableDraft.savedAt, language),
+              })}</strong>
+              <div className="draft-actions">
+                <button type="button" className="primary-button" onClick={resumeDraft}>
+                  {t('resumeDraft')}
+                </button>
+                <button type="button" className="ghost-button" onClick={discardDraft}>
+                  {t('discardDraft')}
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
       </section>
 
-      <section className="workspace">
+      <section
+        className={`workspace${isResizingSidebar ? ' workspace-resizing' : ''}`}
+        ref={workspaceRef}
+        style={{ '--sidebar-width': `${sidebarWidth}px` }}
+      >
         <aside className="sidebar">
           <div className="panel">
             <div className="panel-header">
               <div className="panel-header-main">
-                <h2>Track</h2>
+                <h2>{t('track')}</h2>
                 {track ? <span>{track.format.toUpperCase()}</span> : null}
               </div>
-              <button type="button" className="panel-toggle" onClick={() => togglePanel('track')} aria-label="Toggle Track panel">
+              <button type="button" className="panel-toggle" onClick={() => togglePanel('track')} aria-label={t('togglePanel', { panel: t('track') })}>
                 {collapsedPanels.track ? '+' : '-'}
               </button>
             </div>
@@ -704,101 +1081,147 @@ function App() {
               <>
                 <dl className="stats-grid">
                   <div>
-                    <dt>Name</dt>
+                    <dt>{t('name')}</dt>
                     <dd>{track.name}</dd>
                   </div>
                   <div>
-                    <dt>Points</dt>
+                    <dt>{t('points')}</dt>
                     <dd>{track.points.length}</dd>
                   </div>
                   <div>
-                    <dt>Distance</dt>
+                    <dt>{t('distance')}</dt>
                     <dd>{formatDistance(track.distanceMeters)}</dd>
                   </div>
                   <div>
-                    <dt>Suspicious jumps</dt>
+                    <dt>{t('detectedIssues')}</dt>
                     <dd>{suspiciousSegments.length}</dd>
+                  </div>
+                  <div>
+                    <dt>{t('completedRepairs')}</dt>
+                    <dd>{completedRepairs}</dd>
                   </div>
                 </dl>
 
                 <div className="step-box">
-                  <div className="step-title">1. Click the track to choose a cut point</div>
-                  <p className="muted-text">
-                    Click a suspicious red section to repair it between fixed borders. Click elsewhere on the recorded
-                    track to choose a cut point for deleting everything before or after it.
-                  </p>
+                  <div className="step-title">{t('chooseCutTitle')}</div>
+                  <p className="muted-text">{t('chooseCutHelp')}</p>
                   <div className="stack">
                     <button type="button" className="ghost-button" onClick={deleteBeforeCutPoint} disabled={!selectedCutPoint}>
-                      Delete everything before cut point
+                      {t('deleteBefore')}
                     </button>
                     <button type="button" className="primary-button" onClick={deleteAfterCutPoint} disabled={!selectedCutPoint}>
-                      Delete everything after cut point
+                      {t('deleteAfter')}
+                    </button>
+                    <button type="button" className="ghost-button" onClick={undoLastChange} disabled={!repairHistory.length}>
+                      {t('undoLast')}
                     </button>
                     {hasTrackEdits ? (
                       <button type="button" className="ghost-button" onClick={restoreOriginalTrack}>
-                        Restore original track
+                        {t('restoreOriginal')}
                       </button>
                     ) : null}
                   </div>
                   {selectedCutPoint ? (
                     <div className="note note-neutral">
-                      Selected cut point: {selectedCutPointIndex + 1} at {formatLatLon(selectedCutPoint)}
+                      {t('selectedCutPoint', {
+                        point: selectedCutPointIndex + 1,
+                        location: formatLatLon(selectedCutPoint),
+                      })}
                     </div>
                   ) : null}
                 </div>
               </>
             ) : !collapsedPanels.track ? (
-              <p className="muted-text">Load a track to start.</p>
+              <p className="muted-text">{t('loadTrackToStart')}</p>
             ) : null}
           </div>
+
+          {track ? (
+            <div className="panel visualization-panel">
+              <div className="panel-header">
+                <div className="panel-header-main">
+                  <h2>{t('visualization')}</h2>
+                  <span>{t('trackProfile')}</span>
+                </div>
+                <button type="button" className="panel-toggle" onClick={() => togglePanel('visualization')} aria-label={t('togglePanel', { panel: t('visualization') })}>
+                  {collapsedPanels.visualization ? '+' : '-'}
+                </button>
+              </div>
+
+              {!collapsedPanels.visualization ? (
+                <TrackCharts
+                  onSelectionChange={setChartHighlightedPoints}
+                  samples={visualizationTrack.samples}
+                  t={t}
+                />
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="panel">
             <div className="panel-header">
               <div className="panel-header-main">
-                <h2>Suspicious jumps</h2>
-                {suspiciousSegments.length ? <span>jump hints</span> : null}
+                <h2>{t('suspiciousJumps')}</h2>
+                {suspiciousSegments.length ? <span>{t('jumpHints', { count: suspiciousSegments.length })}</span> : null}
               </div>
-              <button type="button" className="panel-toggle" onClick={() => togglePanel('suspicious')} aria-label="Toggle Suspicious jumps panel">
+              <button type="button" className="panel-toggle" onClick={() => togglePanel('suspicious')} aria-label={t('togglePanel', { panel: t('suspiciousJumps') })}>
                 {collapsedPanels.suspicious ? '+' : '-'}
               </button>
             </div>
 
             {!collapsedPanels.suspicious && suspiciousSegments.length ? (
-              <div className="segment-list">
-                {suspiciousSegments.map((segment, index) => (
-                  <button
-                    key={segment.id}
-                    type="button"
-                    className={`segment-button ${
-                      middleRepairRange?.startSampleIndex === segment.startSampleIndex &&
-                      middleRepairRange?.endSampleIndex === segment.endSampleIndex
-                        ? 'segment-button-active'
-                        : ''
-                    }`}
-                    onClick={() => beginMiddleRepair(segment)}
-                  >
-                    <strong>Jump {index + 1}</strong>
-                    <span>
-                      Repair between fixed points {segment.startIndex + 1} {'->'} {segment.endIndex + 1}
-                    </span>
-                    <span>
-                      {formatDistance(segment.distance)} in {formatDuration(segment.seconds)}
-                    </span>
-                  </button>
-                ))}
-              </div>
+              <>
+                <button
+                  type="button"
+                  className="primary-button queue-action"
+                  onClick={repairNextIssue}
+                  disabled={Boolean(rebuildDirection)}
+                >
+                  {t('repairNext')}
+                </button>
+                <div className="segment-list">
+                  {suspiciousSegments.map((segment, index) => (
+                    <button
+                      key={segment.id}
+                      type="button"
+                      className={`segment-button ${
+                        middleRepairRange?.startSampleIndex === segment.startSampleIndex &&
+                        middleRepairRange?.endSampleIndex === segment.endSampleIndex
+                          ? 'segment-button-active'
+                          : ''
+                      }`}
+                      onClick={() => beginMiddleRepair(segment)}
+                    >
+                      <div className="segment-title-row">
+                        <strong>{t('issue', { number: index + 1 })}</strong>
+                        <span className={`severity-badge severity-${segment.severity}`}>
+                          {t(`severity${capitalize(segment.severity)}`)}
+                        </span>
+                      </div>
+                      <span>{t('fixedBorders', {
+                        start: segment.startIndex + 1,
+                        end: segment.endIndex + 1,
+                      })}</span>
+                      <span>{t('issueMetrics', {
+                        distance: formatDistance(segment.distance),
+                        duration: formatDuration(segment.seconds),
+                      })}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
             ) : !collapsedPanels.suspicious ? (
-              <p className="muted-text">No obvious broken section was detected automatically.</p>
+              <p className="muted-text">{t('noIssues')}</p>
             ) : null}
           </div>
 
           <div className="panel">
             <div className="panel-header">
               <div className="panel-header-main">
-                <h2>{rebuildDirection === 'middle' ? 'Middle repair' : 'Route rebuild'}</h2>
-                {anchorPoint ? <span>routing</span> : null}
+                <h2>{rebuildDirection === 'middle' ? t('middleRepair') : t('routeRebuild')}</h2>
+                {anchorPoint ? <span>{t('routing')}</span> : null}
               </div>
-              <button type="button" className="panel-toggle" onClick={() => togglePanel('rebuild')} aria-label="Toggle Route rebuild panel">
+              <button type="button" className="panel-toggle" onClick={() => togglePanel('rebuild')} aria-label={t('togglePanel', { panel: t('routeRebuild') })}>
                 {collapsedPanels.rebuild ? '+' : '-'}
               </button>
             </div>
@@ -807,56 +1230,64 @@ function App() {
               <>
                 <div className="inspector-grid">
                   <div>
-                    <dt>{rebuildDirection === 'middle' ? 'Start border' : 'Anchor'}</dt>
+                    <dt>{rebuildDirection === 'middle' ? t('startBorder') : t('anchor')}</dt>
                     <dd>{formatLatLon(anchorPoint)}</dd>
                   </div>
                   <div>
-                    <dt>Removed samples</dt>
+                    <dt>{t('removedSamples')}</dt>
                     <dd>{removedSegmentSamples.length}</dd>
                   </div>
                   <div>
                     <dt>
                       {rebuildDirection === 'before'
-                        ? 'Start point'
+                        ? t('startPoint')
                         : rebuildDirection === 'middle'
-                          ? 'End border'
-                          : 'Endpoint'}
+                          ? t('endBorder')
+                          : t('endpoint')}
                     </dt>
-                    <dd>{endpoint ? formatLatLon(endpoint) : 'not set'}</dd>
+                    <dd>{endpoint ? formatLatLon(endpoint) : t('notSet')}</dd>
                   </div>
                   <div>
-                    <dt>Waypoints</dt>
+                    <dt>{t('waypoints')}</dt>
                     <dd>{viaPoints.length}</dd>
                   </div>
                 </div>
 
                 {isPickingEndpoint ? (
                   <div className="note note-action">
-                    Endpoint placement is active. Click on the map to set the missing {rebuildDirection === 'before' ? 'start point' : 'end point'}.
+                    {t('endpointPlacementActive', {
+                      point: rebuildDirection === 'before' ? t('startPoint') : t('endpoint'),
+                    })}
                   </div>
                 ) : null}
                 {isAddingOffGrid ? (
                   <div className="note note-warning">
-                    Off-grid placement is active. Click on the map to place an off-grid waypoint, then continue shaping the route.
+                    {t('offGridPlacementActive')}
                   </div>
                 ) : null}
 
                 <div className="mode-chip-row">
                   <span className={`mode-chip ${isPickingEndpoint || isAddingOffGrid ? 'mode-chip-active' : ''}`}>
-                    Mode: {isPickingEndpoint ? 'placing endpoint' : isAddingOffGrid ? 'adding off-grid waypoint' : mapMode}
+                    {t('mode', {
+                      mode: isPickingEndpoint
+                        ? t('modePlacingEndpoint')
+                        : isAddingOffGrid
+                          ? t('modeOffGrid')
+                          : t('modeInspect'),
+                    })}
                   </span>
                 </div>
 
                 <div className="field-group">
-                  <label htmlFor="route-profile">Navigator profile</label>
+                  <label htmlFor="route-profile">{t('navigatorProfile')}</label>
                   <select
                     id="route-profile"
                     value={routeProfile}
                     onChange={(event) => setRouteProfile(event.target.value)}
                   >
-                    <option value="cycling">Cycling</option>
-                    <option value="walking">Walking</option>
-                    <option value="driving">Driving</option>
+                    <option value="cycling">{t('cycling')}</option>
+                    <option value="walking">{t('walking')}</option>
+                    <option value="driving">{t('driving')}</option>
                   </select>
                 </div>
 
@@ -864,8 +1295,12 @@ function App() {
                   {rebuildDirection !== 'middle' ? (
                     <button type="button" className="primary-button" onClick={() => setMapMode('pick-endpoint')}>
                       {endpoint
-                        ? `Move ${rebuildDirection === 'before' ? 'start point' : 'endpoint'} on map`
-                        : `Place ${rebuildDirection === 'before' ? 'start point' : 'endpoint'} on map`}
+                        ? t('movePoint', {
+                            point: rebuildDirection === 'before' ? t('newStartPoint') : t('newEndpoint'),
+                          })
+                        : t('placePoint', {
+                            point: rebuildDirection === 'before' ? t('newStartPoint') : t('newEndpoint'),
+                          })}
                     </button>
                   ) : null}
                   <button
@@ -874,50 +1309,105 @@ function App() {
                     onClick={() => setMapMode((current) => (current === 'add-offgrid-waypoint' ? 'inspect' : 'add-offgrid-waypoint'))}
                     disabled={!endpoint}
                   >
-                    {isAddingOffGrid ? 'Cancel off-grid placement' : 'Add off-grid waypoint'}
+                    {isAddingOffGrid ? t('cancelOffGrid') : t('addOffGrid')}
                   </button>
                   {rebuildDirection === 'middle' ? (
                     <>
+                      <div className="border-expand-actions">
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={expandMiddleRepairStart}
+                          disabled={middleStartPointIndex <= 0}
+                        >
+                          {t('includeEarlierDrift')}
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={expandMiddleRepairEnd}
+                          disabled={middleEndPointIndex < 0 || middleEndPointIndex >= track.points.length - 1}
+                        >
+                          {t('includeLaterDrift')}
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={extendMiddleRepairToNextIssue}
+                        disabled={!nextIssueAfterRepair}
+                      >
+                        {t('extendToNext')}
+                      </button>
                       <button
                         type="button"
                         className="primary-button"
                         onClick={applyMiddleRepair}
                         disabled={effectiveRoutePreview.status !== 'ready'}
                       >
-                        Apply middle segment
+                        {t('applyMiddle')}
                       </button>
                       <button type="button" className="ghost-button" onClick={cancelMiddleRepair}>
-                        Cancel middle repair
+                        {t('cancelMiddle')}
                       </button>
                     </>
                   ) : null}
                 </div>
 
                 {effectiveRoutePreview.status === 'loading' ? (
-                  <div className="note note-neutral">Building route suggestion...</div>
+                  <div className="note note-neutral">{t('buildingRoute')}</div>
                 ) : null}
                 {effectiveRoutePreview.status === 'error' ? (
                   <div className="note note-danger">{effectiveRoutePreview.error}</div>
                 ) : null}
                 {effectiveRoutePreview.status === 'ready' ? (
                   <div className="note note-good">
-                    Suggested rebuild length: {formatDistance(effectiveRoutePreview.distanceMeters)}
+                    {t('suggestedLength', { distance: formatDistance(effectiveRoutePreview.distanceMeters) })}
                   </div>
                 ) : null}
                 {routeWarning ? <div className="note note-warning">{routeWarning}</div> : null}
+
+                <div className="quality-card">
+                  <div className="quality-title">{t('repairQuality')}</div>
+                  {repairQuality ? (
+                    <>
+                      <div className="quality-row">
+                        <span className={`quality-dot ${repairQuality.directSegments ? 'quality-dot-warning' : ''}`} />
+                        <span>
+                          {repairQuality.directSegments
+                            ? t('qualityMixed', { count: repairQuality.directSegments })
+                            : t('qualityRoadRouted')}
+                        </span>
+                      </div>
+                      {repairQuality.differencePercent !== null ? (
+                        <div className="quality-row">
+                          <span className={`quality-dot ${repairQuality.largeDetour ? 'quality-dot-danger' : ''}`} />
+                          <span>{t('qualityDifference', { percent: repairQuality.differencePercent })}</span>
+                        </div>
+                      ) : null}
+                      {repairQuality.largeDetour ? (
+                        <div className="note note-warning">{t('qualityLargeDetour')}</div>
+                      ) : (
+                        <div className="quality-ready">{t('qualityReady')}</div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="muted-text">{t('qualityNeedsRoute')}</p>
+                  )}
+                </div>
               </>
             ) : !collapsedPanels.rebuild ? (
-              <p className="muted-text">Select a suspicious jump for middle repair, or delete either side of a cut point for end repair.</p>
+              <p className="muted-text">{t('selectRepairHelp')}</p>
             ) : null}
           </div>
 
           <div className="panel">
             <div className="panel-header">
               <div className="panel-header-main">
-                <h2>Waypoint editor</h2>
-                {activeWaypoint ? <span>selected</span> : null}
+                <h2>{t('waypointEditor')}</h2>
+                {activeWaypoint ? <span>{t('selected')}</span> : null}
               </div>
-              <button type="button" className="panel-toggle" onClick={() => togglePanel('waypoints')} aria-label="Toggle Waypoint editor panel">
+              <button type="button" className="panel-toggle" onClick={() => togglePanel('waypoints')} aria-label={t('togglePanel', { panel: t('waypointEditor') })}>
                 {collapsedPanels.waypoints ? '+' : '-'}
               </button>
             </div>
@@ -932,233 +1422,264 @@ function App() {
                     onClick={() => setActiveWaypointId(point.id)}
                   >
                     <strong>
-                      {point.offGrid ? 'Off-grid' : 'Waypoint'} {index + 1}
+                      {point.offGrid
+                        ? t('offGridWaypointNumber', { number: index + 1 })
+                        : t('waypoint', { number: index + 1 })}
                     </strong>
                     <span>{formatLatLon(point)}</span>
                   </button>
                 ))}
               </div>
             ) : !collapsedPanels.waypoints ? (
-              <p className="muted-text">Click the preview line to add a normal waypoint, or use “Add off-grid waypoint” and then click the map.</p>
+              <p className="muted-text">{t('waypointHelp')}</p>
             ) : null}
 
             {!collapsedPanels.waypoints && activeWaypoint ? (
               <div className="waypoint-box">
-                <p className="muted-text">Select any waypoint and toggle off-grid when that part of the route should ignore roads.</p>
+                <p className="muted-text">{t('waypointSelectedHelp')}</p>
                 <label className="checkbox-row">
                   <input
                     type="checkbox"
                     checked={activeWaypoint.offGrid}
                     onChange={(event) => setWaypointOffGrid(activeWaypoint.id, event.target.checked)}
                   />
-                  <span>Off-grid waypoint</span>
+                  <span>{t('offGridWaypoint')}</span>
                 </label>
                 <button type="button" className="ghost-button" onClick={() => removeWaypoint(activeWaypoint.id)}>
-                  Remove selected waypoint
+                  {t('removeWaypoint')}
                 </button>
               </div>
             ) : null}
           </div>
+
+          <div className="panel">
+            <div className="panel-header">
+              <div className="panel-header-main">
+                <h2>{t('history')}</h2>
+                {repairHistory.length ? <span>{repairHistory.length}</span> : null}
+              </div>
+              <button type="button" className="panel-toggle" onClick={() => togglePanel('history')} aria-label={t('togglePanel', { panel: t('history') })}>
+                {collapsedPanels.history ? '+' : '-'}
+              </button>
+            </div>
+
+            {!collapsedPanels.history && repairHistory.length ? (
+              <>
+                <div className="history-list">
+                  {[...repairHistory].reverse().map((entry, index) => (
+                    <div className="history-item" key={entry.id}>
+                      <span className="history-index">{repairHistory.length - index}</span>
+                      <div>
+                        <strong>{t(getHistoryTranslationKey(entry.type))}</strong>
+                        {entry.details.distanceMeters ? (
+                          <span>{formatDistance(entry.details.distanceMeters)}</span>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" className="ghost-button history-undo" onClick={undoLastChange}>
+                  {t('undoLast')}
+                </button>
+              </>
+            ) : !collapsedPanels.history ? (
+              <p className="muted-text">{t('historyEmpty')}</p>
+            ) : null}
+          </div>
         </aside>
 
+        <div
+          aria-label={t('resizeSidebar')}
+          aria-orientation="vertical"
+          aria-valuemax={Math.round(getMaximumSidebarWidth())}
+          aria-valuemin={minimumSidebarWidth}
+          aria-valuenow={sidebarWidth}
+          className="sidebar-resizer"
+          onDoubleClick={() => setSidebarWidth(minimumSidebarWidth)}
+          onKeyDown={handleSidebarResizeKeyDown}
+          onPointerDown={handleSidebarResizeStart}
+          role="separator"
+          tabIndex="0"
+        />
+
         <div className="map-panel">
+          <div className="map-layer-switch" role="group" aria-label={t('mapLayer')}>
+            <button
+              type="button"
+              className={mapLayer === 'scheme' ? 'map-layer-button-active' : ''}
+              onClick={() => setMapLayer('scheme')}
+            >
+              {t('schemeLayer')}
+            </button>
+            <button
+              type="button"
+              className={mapLayer === 'satellite' ? 'map-layer-button-active' : ''}
+              onClick={() => setMapLayer('satellite')}
+            >
+              {t('satelliteLayer')}
+            </button>
+          </div>
           {isPickingEndpoint || isAddingOffGrid ? (
             <div className="map-mode-banner">
               {isPickingEndpoint
-                ? `Click on the map to place the new ${rebuildDirection === 'before' ? 'start point' : 'endpoint'}.`
-                : 'Click on the map to place an off-grid waypoint.'}
+                ? t('endpointPlacementActive', {
+                    point: rebuildDirection === 'before' ? t('startPoint') : t('endpoint'),
+                  })
+                : t('offGridPlacementActive')}
             </div>
           ) : null}
-          <MapContainer center={initialView} zoom={11} scrollWheelZoom className="map">
-            <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
-
-            <MapClickBridge onMapClick={handleMapClick} />
-            <MapSizeInvalidator request={layoutSignature} />
-            <MapResizeObserver />
-            <FitBounds bounds={trackBounds} request={fitRequest} />
-
-            {hasTrackEdits ? sourceTrack?.pointSegments.map((segment, index) => (
-              <Polyline
-                key={`source-${index}`}
-                positions={segment.map((point) => [point.lat, point.lon])}
-                pathOptions={{ color: '#6d7c78', weight: 4, opacity: 0.32, interactive: false }}
-              />
-            )) : null}
-
-            {track?.pointSegments.map((segment, index) => (
-              <Polyline
-                key={`track-${index}`}
-                positions={segment.map((point) => [point.lat, point.lon])}
-                pathOptions={{ color: '#1d5f56', weight: 5, opacity: 0.9 }}
-                eventHandlers={{
-                  click: (event) => handleTrackClick(event.latlng),
-                }}
-              />
-            ))}
-
-            {suspiciousSegments.map((segment) => (
-              <Polyline
-                key={`jump-${segment.id}`}
-                positions={[
-                  [track.points[segment.startIndex].lat, track.points[segment.startIndex].lon],
-                  [track.points[segment.endIndex].lat, track.points[segment.endIndex].lon],
-                ]}
-                pathOptions={{ color: '#cf4920', weight: 4, opacity: 0.95, dashArray: '10 8', interactive: false }}
-              />
-            ))}
-
-            {effectiveRoutePreview.segments.map((segment) => (
-              <Polyline
-                key={segment.id}
-                positions={segment.geometry.map((point) => [point.lat, point.lon])}
-                pathOptions={{
-                  color: segment.mode === 'direct' ? '#8f5d1b' : '#2454d2',
-                  weight: segment.mode === 'direct' ? 4 : 5,
-                  opacity: 0.95,
-                  dashArray: segment.mode === 'direct' ? '7 7' : undefined,
-                }}
-                eventHandlers={{
-                  click: (event) => handleRouteSegmentClick(segment, event.latlng),
-                }}
-              />
-            ))}
-
-            {selectedCutPoint ? (
-              <CircleMarker
-                center={[selectedCutPoint.lat, selectedCutPoint.lon]}
-                radius={9}
-                pathOptions={{
-                  color: '#ffffff',
-                  weight: 3,
-                  fillColor: '#cf4920',
-                  fillOpacity: 0.96,
-                }}
-              >
-                <Tooltip direction="top" offset={[0, -10]} permanent>
-                  Cut point
-                </Tooltip>
-              </CircleMarker>
-            ) : null}
-
-            {anchorPoint ? (
-              <Marker position={[anchorPoint.lat, anchorPoint.lon]} icon={anchorIcon}>
-                <Tooltip direction="top" offset={[0, -10]} permanent>
-                  {rebuildDirection === 'middle' ? 'Repair start border' : 'Last known point'}
-                </Tooltip>
-              </Marker>
-            ) : null}
-
-            {endpoint ? (
-              <Marker
-                position={[endpoint.lat, endpoint.lon]}
-                icon={endpointIcon}
-                draggable={rebuildDirection !== 'middle'}
-                eventHandlers={{
-                  dragend: rebuildDirection !== 'middle'
-                    ? (event) => placeEndpoint(event.target.getLatLng())
-                    : undefined,
-                }}
-              >
-                <Tooltip direction="top" offset={[0, -10]} permanent>
-                  {endpointLabel}
-                </Tooltip>
-              </Marker>
-            ) : null}
-
-            {viaPoints.map((point, index) => (
-              <Marker
-                key={point.id}
-                position={[point.lat, point.lon]}
-                icon={point.offGrid ? offGridIcon : viaIcon}
-                draggable
-                eventHandlers={{
-                  click: () => setActiveWaypointId(point.id),
-                  dblclick: () => removeWaypoint(point.id),
-                  dragend: (event) => handleWaypointMove(point.id, event.target.getLatLng()),
-                }}
-              >
-                <Tooltip direction="top" offset={[0, -10]}>
-                  {point.offGrid ? 'Off-grid' : 'Waypoint'} {index + 1}
-                </Tooltip>
-              </Marker>
-            ))}
-          </MapContainer>
+          <TrackMap
+            activeWaypointId={activeWaypointId}
+            anchorPoint={anchorPoint}
+            anchorLabel={rebuildDirection === 'middle' ? t('repairStartBorder') : t('lastKnownPoint')}
+            endpoint={endpoint}
+            endpointLabel={endpointLabel}
+            fitRequest={fitRequest}
+            hasTrackEdits={hasTrackEdits}
+            initialView={initialView}
+            interactionMode={mapMode}
+            layoutSignature={layoutSignature}
+            mapLayer={mapLayer}
+            offGridLabel={t('offGridLabel')}
+            onEndpointMove={placeEndpoint}
+            onMapClick={handleMapClick}
+            onRouteSegmentClick={handleRouteSegmentClick}
+            onTrackClick={handleTrackClick}
+            onWaypointMove={handleWaypointMove}
+            onWaypointRemove={removeWaypoint}
+            onWaypointSelect={setActiveWaypointId}
+            rebuildDirection={rebuildDirection}
+            routeSegments={effectiveRoutePreview.segments}
+            selectedCutPoint={selectedCutPoint}
+            selectedCutPointLabel={t('cutPoint')}
+            sourceTrack={sourceTrack}
+            suspiciousSegments={suspiciousSegments}
+            track={track}
+            highlightedTrackPoints={chartHighlightedPoints}
+            viaPoints={viaPoints}
+            waypointLabel={t('waypointLabel')}
+          />
         </div>
       </section>
     </div>
   )
 }
 
-function MapClickBridge({ onMapClick }) {
-  useMapEvents({
-    click(event) {
-      onMapClick(event.latlng)
-    },
+function getStoredLanguage() {
+  if (typeof window === 'undefined') {
+    return 'en'
+  }
+
+  const stored = window.localStorage.getItem('fixyourtrack-language')
+  if (stored === 'en' || stored === 'ru') {
+    return stored
+  }
+
+  return window.navigator.language?.toLowerCase().startsWith('ru') ? 'ru' : 'en'
+}
+
+function getStoredRouteProfile() {
+  if (typeof window === 'undefined') {
+    return 'cycling'
+  }
+
+  const stored = window.localStorage.getItem('fixyourtrack-route-profile')
+  return ['cycling', 'walking', 'driving'].includes(stored) ? stored : 'cycling'
+}
+
+function getStoredMapLayer() {
+  if (typeof window === 'undefined') {
+    return 'scheme'
+  }
+
+  return window.localStorage.getItem('fixyourtrack-map-layer') === 'satellite'
+    ? 'satellite'
+    : 'scheme'
+}
+
+function getStoredElevationPreference() {
+  return typeof window !== 'undefined' &&
+    window.localStorage.getItem('fixyourtrack-correct-elevation') === 'true'
+}
+
+function getStoredCollapsedPanels() {
+  const defaults = {
+    track: false,
+    visualization: false,
+    suspicious: false,
+    rebuild: false,
+    waypoints: false,
+    history: false,
+  }
+
+  if (typeof window === 'undefined') {
+    return defaults
+  }
+
+  try {
+    return {
+      ...defaults,
+      ...JSON.parse(window.localStorage.getItem('fixyourtrack-collapsed-panels') ?? '{}'),
+    }
+  }
+  catch {
+    return defaults
+  }
+}
+
+function countAcceptedRepairGroups(samples) {
+  let groups = 0
+  let inAcceptedGroup = false
+
+  for (const sample of samples) {
+    if (sample.repairAccepted && !inAcceptedGroup) {
+      groups += 1
+      inAcceptedGroup = true
+    }
+    else if (!sample.repairAccepted) {
+      inAcceptedGroup = false
+    }
+  }
+
+  return groups
+}
+
+function areTrackSamplesEquivalent(firstTrack, secondTrack) {
+  if (firstTrack.samples.length !== secondTrack.samples.length) {
+    return false
+  }
+
+  return firstTrack.samples.every((sample, index) => {
+    const comparison = secondTrack.samples[index]
+    return sample.lat === comparison.lat &&
+      sample.lon === comparison.lon &&
+      Boolean(sample.repairAccepted) === Boolean(comparison.repairAccepted)
   })
-
-  return null
 }
 
-function MapSizeInvalidator({ request }) {
-  const map = useMap()
-  const previousRequestRef = useRef(null)
+function getIssueSeverity(segment) {
+  if (segment.distance >= 1000 || segment.seconds >= 600 || segment.calcSpeedKmh >= 120) {
+    return 'high'
+  }
 
-  useEffect(() => {
-    if (request === previousRequestRef.current) {
-      return
-    }
+  if (segment.distance >= 300 || segment.seconds >= 60 || segment.calcSpeedKmh >= 60) {
+    return 'medium'
+  }
 
-    previousRequestRef.current = request
-    requestAnimationFrame(() => {
-      map.invalidateSize(false)
-    })
-  }, [map, request])
-
-  return null
+  return 'low'
 }
 
-function MapResizeObserver() {
-  const map = useMap()
-
-  useEffect(() => {
-    const container = map.getContainer()
-    if (typeof ResizeObserver === 'undefined') {
-      return undefined
-    }
-
-    const observer = new ResizeObserver(() => {
-      requestAnimationFrame(() => {
-        map.invalidateSize(false)
-      })
-    })
-
-    observer.observe(container)
-
-    return () => observer.disconnect()
-  }, [map])
-
-  return null
+function getHistoryTranslationKey(type) {
+  return {
+    middle: 'historyMiddle',
+    deleteBefore: 'historyDeleteBefore',
+    deleteAfter: 'historyDeleteAfter',
+    restore: 'historyRestored',
+  }[type] ?? 'historyMiddle'
 }
 
-function FitBounds({ bounds, request }) {
-  const map = useMap()
-  const previousRequestRef = useRef(null)
-
-  useEffect(() => {
-    if (!bounds || request === previousRequestRef.current) {
-      return
-    }
-
-    previousRequestRef.current = request
-    map.fitBounds(bounds, {
-      padding: [36, 36],
-    })
-  }, [bounds, map, request])
-
-  return null
+function capitalize(value) {
+  return value ? `${value[0].toUpperCase()}${value.slice(1)}` : ''
 }
 
 function createWaypoint(latlng, offGrid) {
@@ -1381,31 +1902,55 @@ function rebuildMiddleSegmentSamples(segmentSamples, routeGeometry) {
     return segmentSamples
   }
 
-  const progressRatios = getPolylineVertexProgressRatios(routeGeometry)
-  return routeGeometry.map((point, index) => ({
-    ...interpolateSampleAtRatio(segmentSamples, progressRatios[index]),
-    lat: point.lat,
-    lon: point.lon,
-    repairAccepted: true,
-  }))
+  const progressRatios = getMiddleSegmentProgressRatios(segmentSamples)
+  return segmentSamples.map((sample, index) => {
+    const point = getPointOnPolyline(routeGeometry, progressRatios[index])
+    return {
+      ...sample,
+      lat: point.lat,
+      lon: point.lon,
+      repairAccepted: true,
+    }
+  })
 }
 
-function interpolateSampleAtRatio(samples, ratio) {
-  const scaledIndex = clamp01(ratio) * (samples.length - 1)
-  const lowerIndex = Math.floor(scaledIndex)
-  const upperIndex = Math.min(samples.length - 1, Math.ceil(scaledIndex))
-  const localRatio = scaledIndex - lowerIndex
-  const lower = samples[lowerIndex]
-  const upper = samples[upperIndex]
-  const nearest = localRatio < 0.5 ? lower : upper
-  const nextSample = { ...nearest }
+function getMiddleSegmentProgressRatios(segmentSamples) {
+  const firstSample = segmentSamples[0]
+  const lastSample = segmentSamples[segmentSamples.length - 1]
+  const firstDistance = firstSample?.distance
+  const lastDistance = lastSample?.distance
 
-  for (const field of ['ele', 'speed', 'distance', 'heartRate', 'cadence', 'power', 'temperature']) {
-    nextSample[field] = interpolateNumber(lower[field], upper[field], localRatio)
+  if (
+    Number.isFinite(firstDistance) &&
+    Number.isFinite(lastDistance) &&
+    lastDistance > firstDistance
+  ) {
+    const totalDistance = lastDistance - firstDistance
+    return segmentSamples.map((sample, index) => {
+      const fallback = index / (segmentSamples.length - 1)
+      const progress = Number.isFinite(sample.distance)
+        ? (sample.distance - firstDistance) / totalDistance
+        : fallback
+      return clamp01(progress)
+    })
   }
 
-  nextSample.time = interpolateTime(lower.time, upper.time, localRatio)
-  return nextSample
+  const firstTime = firstSample?.time ? new Date(firstSample.time).getTime() : null
+  const lastTime = lastSample?.time ? new Date(lastSample.time).getTime() : null
+
+  if (Number.isFinite(firstTime) && Number.isFinite(lastTime) && lastTime > firstTime) {
+    const totalTime = lastTime - firstTime
+    return segmentSamples.map((sample, index) => {
+      const fallback = index / (segmentSamples.length - 1)
+      const sampleTime = sample.time ? new Date(sample.time).getTime() : null
+      const progress = Number.isFinite(sampleTime)
+        ? (sampleTime - firstTime) / totalTime
+        : fallback
+      return clamp01(progress)
+    })
+  }
+
+  return segmentSamples.map((_, index) => index / (segmentSamples.length - 1))
 }
 
 function interpolateNumber(from, to, ratio) {
@@ -1414,34 +1959,6 @@ function interpolateNumber(from, to, ratio) {
   }
 
   return Number.isFinite(from) ? from : Number.isFinite(to) ? to : null
-}
-
-function interpolateTime(from, to, ratio) {
-  const fromMs = from ? new Date(from).getTime() : null
-  const toMs = to ? new Date(to).getTime() : null
-
-  if (Number.isFinite(fromMs) && Number.isFinite(toMs)) {
-    return new Date(fromMs + (toMs - fromMs) * ratio).toISOString()
-  }
-
-  return from ?? to ?? null
-}
-
-function getPolylineVertexProgressRatios(points) {
-  const totalLength = getPolylineLength(points)
-  if (totalLength <= 0) {
-    return points.map((_, index) => index / Math.max(1, points.length - 1))
-  }
-
-  const ratios = [0]
-  let traversed = 0
-
-  for (let index = 1; index < points.length; index += 1) {
-    traversed += haversineDistance(points[index - 1], points[index])
-    ratios.push(clamp01(traversed / totalLength))
-  }
-
-  return ratios
 }
 
 async function correctTrackElevation(track) {
@@ -1911,7 +2428,7 @@ function buildTrackPointExtensions(point) {
 }
 
 function getSuspiciousSegments(points) {
-  const segments = []
+  const detectedSegments = []
 
   for (let index = 0; index < points.length - 1; index += 1) {
     const current = points[index]
@@ -1935,11 +2452,9 @@ function getSuspiciousSegments(points) {
       )
 
     if (likelySignalLoss) {
-      segments.push({
-        startIndex: index,
-        endIndex: index + 1,
-        startSampleIndex: current.sampleIndex,
-        endSampleIndex: next.sampleIndex,
+      const expanded = expandSuspiciousSegment(points, index, index + 1)
+      detectedSegments.push({
+        ...expanded,
         distance,
         seconds,
         calcSpeedKmh,
@@ -1948,7 +2463,78 @@ function getSuspiciousSegments(points) {
     }
   }
 
-  return segments
+  return mergeSuspiciousSegments(detectedSegments, points)
+}
+
+function expandSuspiciousSegment(points, startIndex, endIndex) {
+  return {
+    startIndex: findSignalContextBoundary(points, startIndex, -1),
+    endIndex: findSignalContextBoundary(points, endIndex, 1),
+  }
+}
+
+function findSignalContextBoundary(points, originIndex, direction) {
+  const origin = points[originIndex]
+  let boundaryIndex = originIndex
+  let travelledDistance = 0
+
+  for (let step = 1; step <= 15; step += 1) {
+    const candidateIndex = originIndex + step * direction
+    const previousIndex = candidateIndex - direction
+    const candidate = points[candidateIndex]
+    const previous = points[previousIndex]
+
+    if (!candidate || !previous || candidate.repairAccepted) {
+      break
+    }
+
+    const elapsedSeconds = getContextElapsedSeconds(candidate.time, origin.time)
+    travelledDistance += haversineDistance(candidate, previous)
+    if (elapsedSeconds > 20 || travelledDistance > 120) {
+      break
+    }
+
+    boundaryIndex = candidateIndex
+  }
+
+  return boundaryIndex
+}
+
+function getContextElapsedSeconds(firstTime, secondTime) {
+  if (!firstTime || !secondTime) {
+    return 0
+  }
+
+  const firstMs = new Date(firstTime).getTime()
+  const secondMs = new Date(secondTime).getTime()
+  return Number.isFinite(firstMs) && Number.isFinite(secondMs)
+    ? Math.abs(secondMs - firstMs) / 1000
+    : 0
+}
+
+function mergeSuspiciousSegments(segments, points) {
+  const merged = []
+
+  for (const segment of segments) {
+    const previous = merged[merged.length - 1]
+    if (!previous || segment.startIndex > previous.endIndex) {
+      merged.push({
+        ...segment,
+        startSampleIndex: points[segment.startIndex].sampleIndex,
+        endSampleIndex: points[segment.endIndex].sampleIndex,
+      })
+      continue
+    }
+
+    previous.endIndex = Math.max(previous.endIndex, segment.endIndex)
+    previous.endSampleIndex = points[previous.endIndex].sampleIndex
+    previous.distance = Math.max(previous.distance, segment.distance)
+    previous.seconds = Math.max(previous.seconds ?? 0, segment.seconds ?? 0)
+    previous.calcSpeedKmh = Math.max(previous.calcSpeedKmh ?? 0, segment.calcSpeedKmh ?? 0)
+    previous.deviceSpeedKmh = Math.max(previous.deviceSpeedKmh ?? 0, segment.deviceSpeedKmh ?? 0)
+  }
+
+  return merged
 }
 
 function getPointOnPolyline(points, ratio) {
@@ -1998,29 +2584,6 @@ function getPolylineLength(points) {
   return totalLength
 }
 
-function getBounds(points) {
-  if (!points.length) {
-    return null
-  }
-
-  let south = points[0].lat
-  let north = points[0].lat
-  let west = points[0].lon
-  let east = points[0].lon
-
-  for (const point of points) {
-    south = Math.min(south, point.lat)
-    north = Math.max(north, point.lat)
-    west = Math.min(west, point.lon)
-    east = Math.max(east, point.lon)
-  }
-
-  return [
-    [south, west],
-    [north, east],
-  ]
-}
-
 function findNearestPointIndex(points, latlng, maxDistanceMeters = 100) {
   let bestIndex = null
   let bestDistance = Number.POSITIVE_INFINITY
@@ -2042,13 +2605,12 @@ function findNearestSuspiciousSegment(segments, points, latlng, maxDistanceMeter
   const clickedPoint = { lat: latlng.lat, lon: latlng.lng }
 
   for (const segment of segments) {
-    const start = points[segment.startIndex]
-    const end = points[segment.endIndex]
-    if (!start || !end) {
+    const segmentPoints = points.slice(segment.startIndex, segment.endIndex + 1)
+    if (segmentPoints.length < 2) {
       continue
     }
 
-    const distance = getDistanceToLineSegment(clickedPoint, start, end)
+    const distance = getDistanceToPolyline(clickedPoint, segmentPoints)
     if (distance < bestDistance) {
       bestDistance = distance
       bestSegment = segment
@@ -2138,6 +2700,18 @@ function formatDistance(distanceMeters) {
   }
 
   return `${Math.round(distanceMeters)} m`
+}
+
+function formatDraftDate(value, language) {
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) {
+    return value
+  }
+
+  return new Intl.DateTimeFormat(language === 'ru' ? 'ru-RU' : 'en-US', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(date)
 }
 
 function formatDuration(totalSeconds) {
