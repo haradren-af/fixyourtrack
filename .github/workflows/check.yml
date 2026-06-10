@@ -1,0 +1,45 @@
+name: Check source
+
+on:
+  push:
+    branches:
+      - main
+      - release
+      - "codex/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint source
+        run: npm run lint
+
+      - name: Test repair logic
+        run: npm test
+
+      - name: Build application
+        run: npm run build
+
+      - name: Test browser workflow
+        run: node scripts/Browser-Smoke-Test.mjs

@@ -6,6 +6,33 @@ FixYourTrack uses [Semantic Versioning](https://semver.org/):
 - Minor releases (`0.10.0`) contain meaningful feature batches.
 - Version `1.0.0` will mark the first stable release.
 
+## 0.11.0 - 2026-06-10
+
+### Added
+
+- Routing retries and profile-aware fallback providers for cycling and walking.
+- Draft schema migration, validation, and corruption recovery.
+- Privacy-safe local crash diagnostics that exclude track and user data.
+- Unit tests for repair, export, GPX parsing, routing, detection, drafts, and diagnostics.
+- Stateful browser workflow tests for upload, charts, drafts, repair export locking, and export.
+- GitHub CI checks for linting, unit tests, builds, and browser workflows.
+
+### Changed
+
+- Preserved sensor-only FIT records by interpolating repaired GPS positions during GPX export.
+- Preserved distance, speed, heart rate, cadence, power, temperature, timestamps, and segment boundaries.
+- Required start/end repairs to be explicitly applied or cancelled before export.
+- Preserved exact repair borders instead of accepting routing-service endpoint snapping.
+- Persisted active repair sessions in local drafts.
+- Split the map, charts, and FIT parser into deferred bundles to reduce initial JavaScript loading.
+
+### Fixed
+
+- Detected short GPS-loss gaps containing sensor records even when border points are nearby.
+- Corrected GPX speed extension compatibility.
+- Prevented the Windows stop command from terminating unrelated processes referenced by stale PID files.
+- Added timeouts and validation around routing and elevation requests.
+
 ## 0.10.5 - 2026-06-10
 
 ### Changed

@@ -1,13 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import FitParser from 'fit-file-parser'
-import { gpx as toGeoJsonGpx } from '@tmcw/togeojson'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { deleteRepairDraft, loadRepairDraft, saveRepairDraft } from './draftStore'
+import { parseGpxDocument } from './gpx'
 import { translate } from './i18n'
-import TrackMap from './TrackMap'
-import TrackCharts from './TrackCharts'
+import { getRoutingRequests, parseRoutingResponse } from './routing'
+import { getSuspiciousSegments } from './trackDetection'
+import {
+  anchorRouteGeometry,
+  buildExportTrack,
+  buildGpx,
+  finalizeTrack,
+  getPolylineLength,
+  haversineDistance,
+  isValidCoordinate,
+} from './trackCore'
 import packageMetadata from '../package.json'
 
+const TrackCharts = lazy(() => import('./TrackCharts'))
+const TrackMap = lazy(() => import('./TrackMap'))
 const initialView = [55.751244, 37.618423]
 const minimumSidebarWidth = 380
 
@@ -205,6 +215,33 @@ function App() {
       middleRepairRange,
     )
   }, [effectiveRoutePreview, middleRepairRange, rebuildDirection, removedSegmentSamples, track])
+  const activeRepairDraft = useMemo(() => (
+    rebuildDirection
+      ? {
+          selectedCutPointIndex,
+          tailAnchorPointIndex,
+          removedSegmentSamples,
+          rebuildDirection,
+          middleRepairRange,
+          endpoint,
+          viaPoints,
+          activeWaypointId,
+          mapMode,
+          routePreview,
+        }
+      : null
+  ), [
+    activeWaypointId,
+    endpoint,
+    mapMode,
+    middleRepairRange,
+    rebuildDirection,
+    removedSegmentSamples,
+    routePreview,
+    selectedCutPointIndex,
+    tailAnchorPointIndex,
+    viaPoints,
+  ])
 
   useEffect(() => {
     window.localStorage.setItem('fixyourtrack-language', language)
@@ -255,13 +292,13 @@ function App() {
     }
 
     const timeout = window.setTimeout(() => {
-      saveRepairDraft(sourceTrack, track)
+      saveRepairDraft(sourceTrack, track, activeRepairDraft)
         .then((savedAt) => setDraftSavedAt(savedAt))
         .catch(() => {})
     }, 700)
 
     return () => window.clearTimeout(timeout)
-  }, [sourceTrack, track])
+  }, [activeRepairDraft, sourceTrack, track])
 
   useEffect(() => {
     if (!controlPoints.length) {
@@ -557,18 +594,29 @@ function App() {
       const restoredWorking = areTrackSamplesEquivalent(restoredSource, restoredWorkingDraft)
         ? restoredSource
         : restoredWorkingDraft
+      const repairSession = availableDraft.repairSession
+      const hasRepairSession = ['before', 'after', 'middle'].includes(repairSession?.rebuildDirection)
 
       setSourceTrack(restoredSource)
       setTrack(restoredWorking)
-      setSelectedCutPointIndex(null)
-      setTailAnchorPointIndex(null)
-      setRemovedSegmentSamples([])
-      setRebuildDirection(null)
-      setMiddleRepairRange(null)
-      setEndpoint(null)
-      setViaPoints([])
-      setActiveWaypointId(null)
-      setMapMode('inspect')
+      setSelectedCutPointIndex(hasRepairSession ? repairSession.selectedCutPointIndex ?? null : null)
+      setTailAnchorPointIndex(hasRepairSession ? repairSession.tailAnchorPointIndex ?? null : null)
+      setRemovedSegmentSamples(hasRepairSession ? repairSession.removedSegmentSamples ?? [] : [])
+      setRebuildDirection(hasRepairSession ? repairSession.rebuildDirection : null)
+      setMiddleRepairRange(hasRepairSession ? repairSession.middleRepairRange ?? null : null)
+      setEndpoint(hasRepairSession ? repairSession.endpoint ?? null : null)
+      setViaPoints(hasRepairSession ? repairSession.viaPoints ?? [] : [])
+      setActiveWaypointId(hasRepairSession ? repairSession.activeWaypointId ?? null : null)
+      setMapMode(hasRepairSession ? repairSession.mapMode ?? 'inspect' : 'inspect')
+      setRoutePreview(hasRepairSession && repairSession.routePreview
+        ? repairSession.routePreview
+        : {
+            status: 'idle',
+            error: '',
+            segments: [],
+            geometry: [],
+            distanceMeters: 0,
+          })
       setRepairHistory([])
       setDraftSavedAt(availableDraft.savedAt)
       setAvailableDraft(null)
@@ -947,6 +995,11 @@ function App() {
       return
     }
 
+    if (rebuildDirection) {
+      setError(t('finishRepairBeforeExport'))
+      return
+    }
+
     try {
       setIsExporting(true)
       setError('')
@@ -983,10 +1036,84 @@ function App() {
     }
   }
 
+  function applyTailRepair() {
+    if (
+      !track ||
+      !['before', 'after'].includes(rebuildDirection) ||
+      effectiveRoutePreview.status !== 'ready'
+    ) {
+      setError(t('waitForRoute'))
+      return
+    }
+
+    const repairedTrack = buildExportTrack(
+      track,
+      removedSegmentSamples,
+      effectiveRoutePreview.geometry,
+      rebuildDirection,
+    )
+
+    setRepairHistory((current) => {
+      const previous = current[current.length - 1]
+      const completedEntry = {
+        id: crypto.randomUUID(),
+        type: rebuildDirection === 'before' ? 'rebuildBefore' : 'rebuildAfter',
+        track: previous?.track ?? track,
+        details: {
+          distanceMeters: effectiveRoutePreview.distanceMeters,
+          waypoints: viaPoints.length,
+        },
+      }
+      return previous && ['deleteBefore', 'deleteAfter'].includes(previous.type)
+        ? [...current.slice(0, -1), completedEntry]
+        : [...current.slice(-11), completedEntry]
+    })
+    setTrack(repairedTrack)
+    clearRepairSession()
+    setMessage(t('tailApplied'))
+  }
+
+  function cancelTailRepair() {
+    const previous = repairHistory[repairHistory.length - 1]
+    if (previous && ['deleteBefore', 'deleteAfter'].includes(previous.type)) {
+      setTrack(previous.track)
+      setRepairHistory((current) => current.slice(0, -1))
+    }
+    else if (track && rebuildDirection === 'before') {
+      setTrack(finalizeTrack({
+        ...track,
+        samples: [...removedSegmentSamples, ...track.samples],
+      }))
+    }
+    else if (track && rebuildDirection === 'after') {
+      setTrack(finalizeTrack({
+        ...track,
+        samples: [...track.samples, ...removedSegmentSamples],
+      }))
+    }
+
+    clearRepairSession()
+    setMessage(t('tailCancelled'))
+  }
+
+  function clearRepairSession() {
+    setSelectedCutPointIndex(null)
+    setTailAnchorPointIndex(null)
+    setRemovedSegmentSamples([])
+    setRebuildDirection(null)
+    setMiddleRepairRange(null)
+    setEndpoint(null)
+    setViaPoints([])
+    setActiveWaypointId(null)
+    setMapMode('inspect')
+    setError('')
+  }
+
   const activeWaypoint = activeWaypointId
     ? viaPoints.find((point) => point.id === activeWaypointId) ?? null
     : null
   const hasTrackEdits = Boolean(sourceTrack && track && sourceTrack !== track)
+  const exportBlockedByRepair = Boolean(rebuildDirection)
   const isPickingEndpoint = mapMode === 'pick-endpoint'
   const isAddingOffGrid = mapMode === 'add-offgrid-waypoint'
   const endpointLabel = rebuildDirection === 'before'
@@ -1018,7 +1145,13 @@ function App() {
               <span>{t('loadTrack')}</span>
             </label>
 
-            <button type="button" className="ghost-button" onClick={exportTrack} disabled={!track || isExporting}>
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={exportTrack}
+              disabled={!track || isExporting || exportBlockedByRepair}
+              title={exportBlockedByRepair ? t('finishRepairBeforeExport') : undefined}
+            >
               {t('exportGpx')}
             </button>
 
@@ -1144,11 +1277,13 @@ function App() {
               </div>
 
               {!collapsedPanels.visualization ? (
-                <TrackCharts
-                  onSelectionChange={setChartHighlightedPoints}
-                  samples={visualizationTrack.samples}
-                  t={t}
-                />
+                <Suspense fallback={<div className="component-loading">{t('loading')}</div>}>
+                  <TrackCharts
+                    onSelectionChange={setChartHighlightedPoints}
+                    samples={visualizationTrack.samples}
+                    t={t}
+                  />
+                </Suspense>
               ) : null}
             </div>
           ) : null}
@@ -1306,6 +1441,21 @@ function App() {
                   >
                     {isAddingOffGrid ? t('cancelOffGrid') : t('addOffGrid')}
                   </button>
+                  {rebuildDirection !== 'middle' ? (
+                    <>
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={applyTailRepair}
+                        disabled={effectiveRoutePreview.status !== 'ready'}
+                      >
+                        {t('applyTail')}
+                      </button>
+                      <button type="button" className="ghost-button" onClick={cancelTailRepair}>
+                        {t('cancelTail')}
+                      </button>
+                    </>
+                  ) : null}
                   {rebuildDirection === 'middle' ? (
                     <>
                       <div className="border-expand-actions">
@@ -1576,7 +1726,8 @@ function App() {
                 : t('offGridPlacementActive')}
             </div>
           ) : null}
-          <TrackMap
+          <Suspense fallback={<div className="map-loading">{t('loading')}</div>}>
+            <TrackMap
             activeWaypointId={activeWaypointId}
             anchorPoint={anchorPoint}
             anchorLabel={rebuildDirection === 'middle' ? t('repairStartBorder') : t('lastKnownPoint')}
@@ -1605,8 +1756,9 @@ function App() {
             track={track}
             highlightedTrackPoints={chartHighlightedPoints}
             viaPoints={viaPoints}
-            waypointLabel={t('waypointLabel')}
-          />
+              waypointLabel={t('waypointLabel')}
+            />
+          </Suspense>
         </div>
       </section>
     </div>
@@ -1736,6 +1888,8 @@ function getHistoryTranslationKey(type) {
     middle: 'historyMiddle',
     deleteBefore: 'historyDeleteBefore',
     deleteAfter: 'historyDeleteAfter',
+    rebuildBefore: 'historyRebuildBefore',
+    rebuildAfter: 'historyRebuildAfter',
     restore: 'historyRestored',
   }[type] ?? 'historyMiddle'
 }
@@ -1836,54 +1990,58 @@ function getDistanceToLineSegment(point, start, end) {
 }
 
 async function fetchRouteSegment(from, to, profile, signal) {
-  const profileName = ['cycling', 'walking', 'driving'].includes(profile) ? profile : 'cycling'
-  const coordinates = `${from.lon},${from.lat};${to.lon},${to.lat}`
-  const params = new URLSearchParams({
-    overview: 'full',
-    geometries: 'geojson',
-    steps: 'false',
-    continue_straight: 'true',
-  })
-
-  let response
-  try {
-    response = await fetch(`https://router.project-osrm.org/route/v1/${profileName}/${coordinates}?${params.toString()}`, {
-      signal,
-    })
-  }
-  catch (networkError) {
-    const detail = networkError instanceof Error ? networkError.message : 'network error'
-    throw new Error(`Routing service is unreachable: ${detail}`, {
-      cause: networkError,
-    })
+  if (!isValidCoordinate(from) || !isValidCoordinate(to)) {
+    throw new Error('Route segment contains invalid coordinates.')
   }
 
-  if (!response.ok) {
-    throw new Error(`Routing service returned ${response.status}.`)
+  const failures = []
+  const requests = getRoutingRequests(from, to, profile)
+
+  for (const [requestIndex, request] of requests.entries()) {
+    const attempts = requestIndex === 0 ? 2 : 1
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const response = await fetchWithTimeout(request.url, { signal }, 12000)
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`)
+        }
+
+        const route = parseRoutingResponse(await response.json(), request.provider)
+        if (!Array.isArray(route.coordinates) || route.coordinates.length < 2) {
+          throw new Error('no route geometry')
+        }
+
+        const routeGeometry = route.coordinates.map((coordinate) => ({
+          lat: coordinate[1],
+          lon: coordinate[0],
+        }))
+        const geometry = anchorRouteGeometry(routeGeometry, from, to)
+        return {
+          mode: 'routed',
+          geometry,
+          distanceMeters: Number.isFinite(route.distanceMeters) ? route.distanceMeters : getPolylineLength([
+            { lat: from.lat, lon: from.lon },
+            { lat: to.lat, lon: to.lon },
+          ]),
+        }
+      }
+      catch (networkError) {
+        if (signal?.aborted) {
+          throw networkError
+        }
+        failures.push(networkError instanceof Error ? networkError.message : 'network error')
+      }
+    }
   }
 
-  const data = await response.json()
-  const route = Array.isArray(data.routes) ? data.routes[0] : null
-  const routeCoordinates = route?.geometry?.coordinates
-
-  if (!route || !Array.isArray(routeCoordinates) || routeCoordinates.length < 2) {
-    throw new Error('No routable street path was found for one of the route segments.')
-  }
-
-  return {
-    mode: 'routed',
-    geometry: routeCoordinates.map((coordinate) => ({
-      lat: coordinate[1],
-      lon: coordinate[0],
-    })),
-    distanceMeters: Number.isFinite(route.distance) ? route.distance : getPolylineLength([
-      { lat: from.lat, lon: from.lon },
-      { lat: to.lat, lon: to.lon },
-    ]),
-  }
+  throw new Error(`Routing services are unreachable: ${failures.at(-1) ?? 'no route found'}`)
 }
 
 function buildDirectSegment(from, to) {
+  if (!isValidCoordinate(from) || !isValidCoordinate(to)) {
+    throw new Error('Direct segment contains invalid coordinates.')
+  }
+
   const geometry = [
     { lat: from.lat, lon: from.lon },
     { lat: to.lat, lon: to.lon },
@@ -1902,117 +2060,6 @@ function appendSegmentGeometry(currentGeometry, nextGeometry) {
   }
 
   return [...currentGeometry, ...nextGeometry.slice(1)]
-}
-
-function buildExportTrack(track, removedSegmentSamples, routeGeometry, rebuildDirection, middleRepairRange = null) {
-  if (!track) {
-    throw new Error('No track loaded.')
-  }
-
-  if (!removedSegmentSamples.length || routeGeometry.length < 2 || !rebuildDirection) {
-    return track
-  }
-
-  if (rebuildDirection === 'before') {
-    const anchorSample = track.samples[0]
-    const repairedStart = rebuildSegmentSamples(anchorSample, removedSegmentSamples, routeGeometry, 'before')
-
-    return finalizeTrack({
-      ...track,
-      name: getCleanedTrackName(track.name),
-      samples: [...repairedStart, ...track.samples],
-    })
-  }
-
-  if (rebuildDirection === 'middle') {
-    if (!middleRepairRange) {
-      return track
-    }
-
-    const { startSampleIndex, endSampleIndex } = middleRepairRange
-    const segmentSamples = track.samples.slice(startSampleIndex, endSampleIndex + 1)
-    const repairedSegment = rebuildMiddleSegmentSamples(segmentSamples, routeGeometry)
-
-    return finalizeTrack({
-      ...track,
-      name: getCleanedTrackName(track.name),
-      samples: [
-        ...track.samples.slice(0, startSampleIndex),
-        ...repairedSegment,
-        ...track.samples.slice(endSampleIndex + 1),
-      ],
-    })
-  }
-
-  const anchorSample = track.samples[track.samples.length - 1]
-  const repairedTail = rebuildSegmentSamples(anchorSample, removedSegmentSamples, routeGeometry, 'after')
-
-  return finalizeTrack({
-    ...track,
-    name: getCleanedTrackName(track.name),
-    samples: [...track.samples, ...repairedTail],
-  })
-}
-
-function getCleanedTrackName(name) {
-  const baseName = name || 'fixed-track'
-  return baseName.endsWith('-cleaned') ? baseName : `${baseName}-cleaned`
-}
-
-function rebuildMiddleSegmentSamples(segmentSamples, routeGeometry) {
-  if (segmentSamples.length < 2 || routeGeometry.length < 2) {
-    return segmentSamples
-  }
-
-  const progressRatios = getMiddleSegmentProgressRatios(segmentSamples)
-  return segmentSamples.map((sample, index) => {
-    const point = getPointOnPolyline(routeGeometry, progressRatios[index])
-    return {
-      ...sample,
-      lat: point.lat,
-      lon: point.lon,
-      repairAccepted: true,
-    }
-  })
-}
-
-function getMiddleSegmentProgressRatios(segmentSamples) {
-  const firstSample = segmentSamples[0]
-  const lastSample = segmentSamples[segmentSamples.length - 1]
-  const firstDistance = firstSample?.distance
-  const lastDistance = lastSample?.distance
-
-  if (
-    Number.isFinite(firstDistance) &&
-    Number.isFinite(lastDistance) &&
-    lastDistance > firstDistance
-  ) {
-    const totalDistance = lastDistance - firstDistance
-    return segmentSamples.map((sample, index) => {
-      const fallback = index / (segmentSamples.length - 1)
-      const progress = Number.isFinite(sample.distance)
-        ? (sample.distance - firstDistance) / totalDistance
-        : fallback
-      return clamp01(progress)
-    })
-  }
-
-  const firstTime = firstSample?.time ? new Date(firstSample.time).getTime() : null
-  const lastTime = lastSample?.time ? new Date(lastSample.time).getTime() : null
-
-  if (Number.isFinite(firstTime) && Number.isFinite(lastTime) && lastTime > firstTime) {
-    const totalTime = lastTime - firstTime
-    return segmentSamples.map((sample, index) => {
-      const fallback = index / (segmentSamples.length - 1)
-      const sampleTime = sample.time ? new Date(sample.time).getTime() : null
-      const progress = Number.isFinite(sampleTime)
-        ? (sampleTime - firstTime) / totalTime
-        : fallback
-      return clamp01(progress)
-    })
-  }
-
-  return segmentSamples.map((_, index) => index / (segmentSamples.length - 1))
 }
 
 function interpolateNumber(from, to, ratio) {
@@ -2066,7 +2113,7 @@ async function fetchElevationProfile(points) {
 async function fetchOpenElevationProfile(points) {
   let response
   try {
-    response = await fetch('https://api.open-elevation.com/api/v1/lookup', {
+    response = await fetchWithTimeout('https://api.open-elevation.com/api/v1/lookup', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -2077,7 +2124,7 @@ async function fetchOpenElevationProfile(points) {
           longitude: roundCoordinate(point.lon),
         })),
       }),
-    })
+    }, 25000)
   }
   catch (networkError) {
     const detail = networkError instanceof Error ? networkError.message : 'network error'
@@ -2114,9 +2161,9 @@ async function fetchOpenMeteoElevationProfile(points) {
 
     let response
     try {
-      response = await fetch(`https://api.open-meteo.com/v1/elevation?${params.toString()}`, {
+      response = await fetchWithTimeout(`https://api.open-meteo.com/v1/elevation?${params.toString()}`, {
         method: 'GET',
-      })
+      }, 25000)
     }
     catch (networkError) {
       const detail = networkError instanceof Error ? networkError.message : 'network error'
@@ -2209,88 +2256,37 @@ async function readApiError(response) {
   }
 }
 
-function rebuildSegmentSamples(anchorSample, segmentSamples, routeGeometry, rebuildDirection) {
-  if (!segmentSamples.length) {
-    return []
+async function fetchWithTimeout(resource, options = {}, timeoutMs = 20000) {
+  const timeoutController = new AbortController()
+  const upstreamSignal = options.signal
+  const abortFromUpstream = () => timeoutController.abort()
+  const timeout = window.setTimeout(() => timeoutController.abort(), timeoutMs)
+
+  if (upstreamSignal?.aborted) {
+    timeoutController.abort()
+  }
+  else {
+    upstreamSignal?.addEventListener('abort', abortFromUpstream, { once: true })
   }
 
-  const ratios = getSegmentProgressRatios(anchorSample, segmentSamples, rebuildDirection)
-  return segmentSamples.map((sample, index) => {
-    const point = getPointOnPolyline(routeGeometry, ratios[index])
-    return {
-      ...sample,
-      lat: point.lat,
-      lon: point.lon,
+  try {
+    return await fetch(resource, {
+      ...options,
+      signal: timeoutController.signal,
+    })
+  }
+  catch (error) {
+    if (timeoutController.signal.aborted && !upstreamSignal?.aborted) {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)} seconds.`, {
+        cause: error,
+      })
     }
-  })
-}
-
-function getSegmentProgressRatios(anchorSample, segmentSamples, rebuildDirection) {
-  const allSamples = [anchorSample, ...segmentSamples]
-  const lastSegmentSample = segmentSamples[segmentSamples.length - 1]
-  const firstSegmentSample = segmentSamples[0]
-
-  if (
-    Number.isFinite(anchorSample?.distance) &&
-    (
-      (rebuildDirection === 'after' &&
-        Number.isFinite(lastSegmentSample?.distance) &&
-        lastSegmentSample.distance > anchorSample.distance) ||
-      (rebuildDirection === 'before' &&
-        Number.isFinite(firstSegmentSample?.distance) &&
-        anchorSample.distance > firstSegmentSample.distance)
-    )
-  ) {
-    const totalDistance = rebuildDirection === 'before'
-      ? anchorSample.distance - firstSegmentSample.distance
-      : lastSegmentSample.distance - anchorSample.distance
-    return segmentSamples.map((sample, index) => {
-      const delta = Number.isFinite(sample.distance)
-        ? (rebuildDirection === 'before'
-            ? sample.distance - firstSegmentSample.distance
-            : sample.distance - anchorSample.distance)
-        : ((index + 1) / segmentSamples.length) * totalDistance
-      return clamp01(delta / totalDistance)
-    })
+    throw error
   }
-
-  const segmentStartTime = firstSegmentSample?.time ? new Date(firstSegmentSample.time).getTime() : null
-  const anchorTime = anchorSample?.time ? new Date(anchorSample.time).getTime() : null
-  const segmentEndTime = lastSegmentSample?.time ? new Date(lastSegmentSample.time).getTime() : null
-
-  if (
-    rebuildDirection === 'before' &&
-    Number.isFinite(segmentStartTime) &&
-    Number.isFinite(anchorTime) &&
-    anchorTime > segmentStartTime
-  ) {
-    const totalTime = anchorTime - segmentStartTime
-    return segmentSamples.map((sample, index) => {
-      const sampleTime = sample.time ? new Date(sample.time).getTime() : null
-      const value = Number.isFinite(sampleTime)
-        ? sampleTime - segmentStartTime
-        : ((index + 1) / segmentSamples.length) * totalTime
-      return clamp01(value / totalTime)
-    })
+  finally {
+    window.clearTimeout(timeout)
+    upstreamSignal?.removeEventListener('abort', abortFromUpstream)
   }
-
-  if (
-    rebuildDirection === 'after' &&
-    Number.isFinite(anchorTime) &&
-    Number.isFinite(segmentEndTime) &&
-    segmentEndTime > anchorTime
-  ) {
-    const totalTime = segmentEndTime - anchorTime
-    return segmentSamples.map((sample, index) => {
-      const sampleTime = sample.time ? new Date(sample.time).getTime() : null
-      const value = Number.isFinite(sampleTime)
-        ? sampleTime - anchorTime
-        : ((index + 1) / segmentSamples.length) * totalTime
-      return clamp01(value / totalTime)
-    })
-  }
-
-  return allSamples.slice(1).map((_, index) => (index + 1) / segmentSamples.length)
 }
 
 async function loadTrack(file) {
@@ -2310,38 +2306,11 @@ async function loadTrack(file) {
 async function readGpxFile(file) {
   const content = await file.text()
   const xml = new DOMParser().parseFromString(content, 'application/xml')
-  const geoJson = toGeoJsonGpx(xml)
-  const feature = geoJson.features.find((item) => item.geometry?.type === 'LineString')
-
-  if (!feature) {
-    throw new Error('No track geometry was found in the GPX file.')
-  }
-
-  const coordinates = feature.geometry.coordinates
-  const times = feature.properties?.coordinateProperties?.times ?? []
-  const elevations = feature.properties?.coordinateProperties?.ele ?? []
-
-  const samples = coordinates.map((coordinate, index) => ({
-    lat: coordinate[1],
-    lon: coordinate[0],
-    ele: coordinate[2] ?? elevations[index] ?? null,
-    time: times[index] ?? null,
-    speed: null,
-    distance: null,
-    heartRate: readHeartRateFromGpx(xml, index),
-    cadence: null,
-    power: null,
-    temperature: null,
-  }))
-
-  return finalizeTrack({
-    name: file.name.replace(/\.gpx$/i, ''),
-    format: 'gpx',
-    samples,
-  })
+  return finalizeTrack(parseGpxDocument(xml, file.name.replace(/\.gpx$/i, '')))
 }
 
 async function readFitFile(file) {
+  const { default: FitParser } = await import('fit-file-parser')
   const fitParser = new FitParser({
     force: true,
     speedUnit: 'm/s',
@@ -2354,7 +2323,7 @@ async function readFitFile(file) {
   const data = await fitParser.parseAsync(new Uint8Array(buffer))
   const records = Array.isArray(data.records) ? data.records : []
 
-  const samples = records.map((record) => ({
+  const samples = records.map((record, index) => ({
     lat: Number.isFinite(record.position_lat) ? normalizeFitCoordinate(record.position_lat) : null,
     lon: Number.isFinite(record.position_long) ? normalizeFitCoordinate(record.position_long) : null,
     ele: Number.isFinite(record.altitude) ? record.altitude : null,
@@ -2365,9 +2334,10 @@ async function readFitFile(file) {
     cadence: Number.isFinite(record.cadence) ? record.cadence : null,
     power: Number.isFinite(record.power) ? record.power : null,
     temperature: Number.isFinite(record.temperature) ? record.temperature : null,
+    segmentStart: index === 0,
   }))
 
-  if (!samples.some((sample) => Number.isFinite(sample.lat) && Number.isFinite(sample.lon))) {
+  if (!samples.some(isValidCoordinate)) {
     throw new Error('No valid GPS points were found in the FIT file.')
   }
 
@@ -2376,274 +2346,6 @@ async function readFitFile(file) {
     format: 'fit',
     samples,
   })
-}
-
-function finalizeTrack(track) {
-  const samples = (track.samples ?? []).map((sample) => ({
-    ...sample,
-    heartRate: Number.isFinite(sample.heartRate) ? sample.heartRate : null,
-    distance: Number.isFinite(sample.distance) ? sample.distance : null,
-    speed: Number.isFinite(sample.speed) ? sample.speed : null,
-    ele: Number.isFinite(sample.ele) ? sample.ele : null,
-    cadence: Number.isFinite(sample.cadence) ? sample.cadence : null,
-    power: Number.isFinite(sample.power) ? sample.power : null,
-    temperature: Number.isFinite(sample.temperature) ? sample.temperature : null,
-  }))
-
-  const points = samples
-    .map((sample, sampleIndex) => (
-      Number.isFinite(sample.lat) && Number.isFinite(sample.lon)
-        ? { ...sample, sampleIndex }
-        : null
-    ))
-    .filter(Boolean)
-
-  if (points.length < 2) {
-    throw new Error('The track does not have enough valid GPS points.')
-  }
-
-  const pointSegments = buildPointSegments(points)
-
-  return {
-    ...track,
-    samples,
-    points,
-    pointSegments,
-    distanceMeters: pointSegments.reduce((total, segment) => total + getPolylineLength(segment), 0),
-  }
-}
-
-function buildPointSegments(points) {
-  if (!points.length) {
-    return []
-  }
-
-  return [points]
-}
-
-function buildGpx(track) {
-  const trackName = escapeXml(track.name || 'Fixed Track')
-  const pointSegments = track.pointSegments ?? buildPointSegments(track.points ?? [])
-  const segmentsXml = pointSegments
-    .map((segment) => {
-      const pointsXml = segment
-        .map((point) => {
-          const ele = point.ele !== null && point.ele !== undefined ? `<ele>${point.ele}</ele>` : ''
-          const time = point.time ? `<time>${escapeXml(point.time)}</time>` : ''
-          const extensions = buildTrackPointExtensions(point)
-          return `<trkpt lat="${point.lat}" lon="${point.lon}">${ele}${time}${extensions}</trkpt>`
-        })
-        .join('')
-
-      return `<trkseg>${pointsXml}</trkseg>`
-    })
-    .join('')
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="Fix Your Track" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1" xmlns:fixtrack="https://fixyourtrack.local/extensions/v1">
-  <trk>
-    <name>${trackName}</name>
-    ${segmentsXml}
-  </trk>
-</gpx>`
-}
-
-function buildTrackPointExtensions(point) {
-  const extensionFields = []
-  const customFields = []
-
-  if (Number.isFinite(point.heartRate)) {
-    extensionFields.push(`<gpxtpx:hr>${Math.round(point.heartRate)}</gpxtpx:hr>`)
-  }
-
-  if (Number.isFinite(point.speed)) {
-    extensionFields.push(`<gpxtpx:speed>${point.speed}</gpxtpx:speed>`)
-  }
-
-  if (Number.isFinite(point.cadence)) {
-    extensionFields.push(`<gpxtpx:cad>${Math.round(point.cadence)}</gpxtpx:cad>`)
-  }
-
-  if (Number.isFinite(point.temperature)) {
-    extensionFields.push(`<gpxtpx:atemp>${point.temperature}</gpxtpx:atemp>`)
-  }
-
-  if (Number.isFinite(point.power)) {
-    customFields.push(`<fixtrack:power>${Math.round(point.power)}</fixtrack:power>`)
-  }
-
-  if (!extensionFields.length && !customFields.length) {
-    return ''
-  }
-
-  const parts = []
-
-  if (extensionFields.length) {
-    parts.push(`<gpxtpx:TrackPointExtension>${extensionFields.join('')}</gpxtpx:TrackPointExtension>`)
-  }
-
-  if (customFields.length) {
-    parts.push(customFields.join(''))
-  }
-
-  return `<extensions>${parts.join('')}</extensions>`
-}
-
-function getSuspiciousSegments(points) {
-  const detectedSegments = []
-
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const current = points[index]
-    const next = points[index + 1]
-    if (current.repairAccepted && next.repairAccepted) {
-      continue
-    }
-
-    const distance = haversineDistance(current, next)
-    const seconds = getSecondsBetween(current.time, next.time)
-    const calcSpeedKmh = seconds > 0 ? (distance / seconds) * 3.6 : null
-    const deviceSpeedKmh = maxSpeedKmh(current.speed, next.speed)
-    const likelySignalLoss =
-      distance >= 120 &&
-      (
-        seconds === null ||
-        (seconds >= 30 && distance >= 120) ||
-        (seconds >= 120 && distance >= 60) ||
-        (calcSpeedKmh !== null && calcSpeedKmh > 42) ||
-        (deviceSpeedKmh !== null && deviceSpeedKmh < 12 && distance > 180)
-      )
-
-    if (likelySignalLoss) {
-      const expanded = expandSuspiciousSegment(points, index, index + 1)
-      detectedSegments.push({
-        ...expanded,
-        distance,
-        seconds,
-        calcSpeedKmh,
-        deviceSpeedKmh,
-      })
-    }
-  }
-
-  return mergeSuspiciousSegments(detectedSegments, points)
-}
-
-function expandSuspiciousSegment(points, startIndex, endIndex) {
-  return {
-    startIndex: findSignalContextBoundary(points, startIndex, -1),
-    endIndex: findSignalContextBoundary(points, endIndex, 1),
-  }
-}
-
-function findSignalContextBoundary(points, originIndex, direction) {
-  const origin = points[originIndex]
-  let boundaryIndex = originIndex
-  let travelledDistance = 0
-
-  for (let step = 1; step <= 15; step += 1) {
-    const candidateIndex = originIndex + step * direction
-    const previousIndex = candidateIndex - direction
-    const candidate = points[candidateIndex]
-    const previous = points[previousIndex]
-
-    if (!candidate || !previous || candidate.repairAccepted) {
-      break
-    }
-
-    const elapsedSeconds = getContextElapsedSeconds(candidate.time, origin.time)
-    travelledDistance += haversineDistance(candidate, previous)
-    if (elapsedSeconds > 20 || travelledDistance > 120) {
-      break
-    }
-
-    boundaryIndex = candidateIndex
-  }
-
-  return boundaryIndex
-}
-
-function getContextElapsedSeconds(firstTime, secondTime) {
-  if (!firstTime || !secondTime) {
-    return 0
-  }
-
-  const firstMs = new Date(firstTime).getTime()
-  const secondMs = new Date(secondTime).getTime()
-  return Number.isFinite(firstMs) && Number.isFinite(secondMs)
-    ? Math.abs(secondMs - firstMs) / 1000
-    : 0
-}
-
-function mergeSuspiciousSegments(segments, points) {
-  const merged = []
-
-  for (const segment of segments) {
-    const previous = merged[merged.length - 1]
-    if (!previous || segment.startIndex > previous.endIndex) {
-      merged.push({
-        ...segment,
-        startSampleIndex: points[segment.startIndex].sampleIndex,
-        endSampleIndex: points[segment.endIndex].sampleIndex,
-      })
-      continue
-    }
-
-    previous.endIndex = Math.max(previous.endIndex, segment.endIndex)
-    previous.endSampleIndex = points[previous.endIndex].sampleIndex
-    previous.distance = Math.max(previous.distance, segment.distance)
-    previous.seconds = Math.max(previous.seconds ?? 0, segment.seconds ?? 0)
-    previous.calcSpeedKmh = Math.max(previous.calcSpeedKmh ?? 0, segment.calcSpeedKmh ?? 0)
-    previous.deviceSpeedKmh = Math.max(previous.deviceSpeedKmh ?? 0, segment.deviceSpeedKmh ?? 0)
-  }
-
-  return merged
-}
-
-function getPointOnPolyline(points, ratio) {
-  if (ratio <= 0) {
-    return { lat: points[0].lat, lon: points[0].lon }
-  }
-
-  if (ratio >= 1) {
-    const lastPoint = points[points.length - 1]
-    return { lat: lastPoint.lat, lon: lastPoint.lon }
-  }
-
-  const totalLength = getPolylineLength(points)
-  if (totalLength === 0) {
-    return { lat: points[0].lat, lon: points[0].lon }
-  }
-
-  let targetDistance = totalLength * ratio
-
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const from = points[index]
-    const to = points[index + 1]
-    const segmentLength = haversineDistance(from, to)
-
-    if (targetDistance <= segmentLength || index === points.length - 2) {
-      const localRatio = segmentLength === 0 ? 0 : targetDistance / segmentLength
-      return {
-        lat: from.lat + (to.lat - from.lat) * localRatio,
-        lon: from.lon + (to.lon - from.lon) * localRatio,
-      }
-    }
-
-    targetDistance -= segmentLength
-  }
-
-  const lastPoint = points[points.length - 1]
-  return { lat: lastPoint.lat, lon: lastPoint.lon }
-}
-
-function getPolylineLength(points) {
-  let totalLength = 0
-
-  for (let index = 0; index < points.length - 1; index += 1) {
-    totalLength += haversineDistance(points[index], points[index + 1])
-  }
-
-  return totalLength
 }
 
 function findNearestPointIndex(points, latlng, maxDistanceMeters = 100) {
@@ -2682,48 +2384,6 @@ function findNearestSuspiciousSegment(segments, points, latlng, maxDistanceMeter
   return bestDistance <= maxDistanceMeters ? bestSegment : null
 }
 
-function haversineDistance(from, to) {
-  const earthRadius = 6371000
-  const lat1 = degreesToRadians(from.lat)
-  const lat2 = degreesToRadians(to.lat)
-  const latDiff = degreesToRadians(to.lat - from.lat)
-  const lonDiff = degreesToRadians(to.lon - from.lon)
-
-  const value =
-    Math.sin(latDiff / 2) * Math.sin(latDiff / 2) +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(lonDiff / 2) * Math.sin(lonDiff / 2)
-
-  return 2 * earthRadius * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value))
-}
-
-function degreesToRadians(value) {
-  return (value * Math.PI) / 180
-}
-
-function maxSpeedKmh(firstSpeed, secondSpeed) {
-  const values = [firstSpeed, secondSpeed].filter(Number.isFinite)
-  if (!values.length) {
-    return null
-  }
-
-  return Math.max(...values) * 3.6
-}
-
-function getSecondsBetween(firstTime, secondTime) {
-  if (!firstTime || !secondTime) {
-    return null
-  }
-
-  const firstMs = new Date(firstTime).getTime()
-  const secondMs = new Date(secondTime).getTime()
-
-  if (!Number.isFinite(firstMs) || !Number.isFinite(secondMs)) {
-    return null
-  }
-
-  return Math.max(0, (secondMs - firstMs) / 1000)
-}
-
 function normalizeFitCoordinate(value) {
   if (!Number.isFinite(value)) {
     return value
@@ -2734,22 +2394,6 @@ function normalizeFitCoordinate(value) {
   }
 
   return (value * 180) / 2147483648
-}
-
-function readHeartRateFromGpx(xml, index) {
-  const trackPoints = xml.getElementsByTagNameNS('*', 'trkpt')
-  const point = trackPoints[index]
-  if (!point) {
-    return null
-  }
-
-  const hrNode = point.getElementsByTagNameNS('*', 'hr')[0]
-  if (!hrNode) {
-    return null
-  }
-
-  const value = Number.parseFloat(hrNode.textContent ?? '')
-  return Number.isFinite(value) ? value : null
 }
 
 function formatDistance(distanceMeters) {
@@ -2800,10 +2444,6 @@ function formatLatLon(point) {
   return `${point.lat.toFixed(5)}, ${point.lon.toFixed(5)}`
 }
 
-function clamp01(value) {
-  return Math.max(0, Math.min(1, value))
-}
-
 function roundCoordinate(value) {
   return Number.parseFloat(value.toFixed(6))
 }
@@ -2812,15 +2452,6 @@ function sanitizeFilename(name) {
   return Array.from(name, (char) => (
     /[<>:"/\\|?*]/.test(char) || char.charCodeAt(0) < 32 ? '-' : char
   )).join('')
-}
-
-function escapeXml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&apos;')
 }
 
 export default App

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="FixYourTrack browser test" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v2">
+  <trk>
+    <name>Browser fixture</name>
+    <trkseg>
+      <trkpt lat="55.7500" lon="37.6100">
+        <ele>120</ele>
+        <time>2026-06-10T12:00:00Z</time>
+        <extensions><gpxtpx:TrackPointExtension><gpxtpx:hr>125</gpxtpx:hr><gpxtpx:speed>5</gpxtpx:speed></gpxtpx:TrackPointExtension></extensions>
+      </trkpt>
+      <trkpt lat="55.7510" lon="37.6110">
+        <ele>125</ele>
+        <time>2026-06-10T12:00:10Z</time>
+        <extensions><gpxtpx:TrackPointExtension><gpxtpx:hr>130</gpxtpx:hr><gpxtpx:speed>5.5</gpxtpx:speed></gpxtpx:TrackPointExtension></extensions>
+      </trkpt>
+      <trkpt lat="55.7520" lon="37.6120">
+        <ele>123</ele>
+        <time>2026-06-10T12:00:20Z</time>
+        <extensions><gpxtpx:TrackPointExtension><gpxtpx:hr>135</gpxtpx:hr><gpxtpx:speed>6</gpxtpx:speed></gpxtpx:TrackPointExtension></extensions>
+      </trkpt>
+      <trkpt lat="55.7530" lon="37.6130">
+        <ele>128</ele>
+        <time>2026-06-10T12:00:30Z</time>
+        <extensions><gpxtpx:TrackPointExtension><gpxtpx:hr>140</gpxtpx:hr><gpxtpx:speed>5.8</gpxtpx:speed></gpxtpx:TrackPointExtension></extensions>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>

@@ -45,6 +45,39 @@ body {
   background: var(--bg);
 }
 
+.crash-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #e9ece5;
+  color: #12231f;
+}
+
+.crash-panel {
+  width: min(640px, 100%);
+  padding: 32px;
+  border: 1px solid #c7cec7;
+  background: #fffdf7;
+}
+
+.crash-panel h1 {
+  margin: 8px 0 12px;
+}
+
+.crash-code {
+  padding: 12px;
+  border-left: 3px solid #d6531d;
+  background: #f2f3ed;
+}
+
+.crash-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+}
+
 button,
 input {
   font: inherit;

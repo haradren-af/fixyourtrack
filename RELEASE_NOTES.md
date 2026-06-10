@@ -1,20 +1,18 @@
-# FixYourTrack 0.10.5
+# FixYourTrack 0.11.0
 
-This release reorganizes interface preferences into a dedicated Settings panel.
+This release hardens track repair and export, improves routing resilience, and adds automated verification.
 
 Highlights:
 
-- Switch between light and dark application themes from the Settings panel.
-- Configure elevation correction during export from the Settings panel.
-- Read short explanations for each available setting.
-- See the application version separately from actionable settings.
-- Use the operating-system theme preference automatically on first launch.
-- Keep map scheme and satellite imagery unchanged while surrounding screen elements switch theme.
-- Repair damaged track starts, ends, and middle sections.
-- Reconstruct routes with routed and off-grid waypoints.
-- Preserve recorded timestamps and sensor data during middle repairs.
-- Inspect elevation, speed, and heart-rate charts.
-- Select a chart range to highlight the matching route section on the map.
+- Preserve sensor-only FIT records by assigning repaired GPS positions during GPX export.
+- Preserve timestamps, distance, speed, heart rate, cadence, power, temperature, and GPX segments.
+- Explicitly apply or cancel start/end repairs before export.
+- Resume active repair sessions from validated local drafts.
+- Use profile-aware cycling and walking routing with retries and fallback providers.
+- Preserve exact repair borders instead of accepting router endpoint snapping.
+- Recover safely from malformed drafts and show privacy-safe local crash diagnostics.
+- Load the map, charts, and FIT parser only when needed for faster startup.
+- Run unit, production-build, and stateful browser workflow checks in CI.
 - Run dependency-free tester packages on Windows, Intel Macs, and Apple Silicon Macs.
 
 See `CHANGELOG.md` for the complete list of changes and fixes.
