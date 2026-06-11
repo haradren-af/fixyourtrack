@@ -1,7 +1,9 @@
+import { normalizeLegModes } from './routeLegs.js'
+
 const databaseName = 'fixyourtrack'
 const storeName = 'repair-drafts'
 const activeDraftId = 'active'
-const currentSchemaVersion = 2
+const currentSchemaVersion = 3
 
 export async function loadRepairDraft() {
   try {
@@ -103,6 +105,7 @@ function normalizeRepairSession(session) {
     middleRepairRange: normalizeMiddleRange(session.middleRepairRange),
     endpoint: hasValidCoordinate(session.endpoint) ? session.endpoint : null,
     viaPoints: Array.isArray(session.viaPoints) ? session.viaPoints.filter(hasValidCoordinate) : [],
+    legModes: normalizeLegModes(session.legModes),
     activeWaypointId: typeof session.activeWaypointId === 'string' ? session.activeWaypointId : null,
     mapMode: ['inspect', 'pick-endpoint', 'add-offgrid-waypoint'].includes(session.mapMode)
       ? session.mapMode

@@ -19,7 +19,7 @@ test('migrates legacy drafts without an active repair session', () => {
     workingTrack: track,
   })
 
-  assert.equal(draft.schemaVersion, 2)
+  assert.equal(draft.schemaVersion, 3)
   assert.equal(draft.repairSession, null)
 })
 
@@ -35,6 +35,7 @@ test('sanitizes active repair session fields', () => {
       selectedCutPointIndex: -5,
       removedSegmentSamples: [],
       viaPoints: [{ lat: 55.005, lon: 37.005 }, { lat: 900, lon: 37 }],
+      legModes: { anchor: 'direct', broken: 'invalid' },
       mapMode: 'unexpected',
       routePreview: { status: 'loading', geometry: [], segments: [], distanceMeters: -1 },
     },
@@ -42,6 +43,7 @@ test('sanitizes active repair session fields', () => {
 
   assert.equal(draft.repairSession.selectedCutPointIndex, null)
   assert.equal(draft.repairSession.viaPoints.length, 1)
+  assert.deepEqual(draft.repairSession.legModes, { anchor: 'direct' })
   assert.equal(draft.repairSession.mapMode, 'inspect')
   assert.equal(draft.repairSession.routePreview.status, 'idle')
   assert.equal(draft.repairSession.routePreview.distanceMeters, 0)

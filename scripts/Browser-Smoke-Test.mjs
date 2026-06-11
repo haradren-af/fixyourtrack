@@ -52,6 +52,76 @@ try {
   const cancelRepairButton = page.getByRole('button', { name: 'Cancel middle repair' })
   await cancelRepairButton.waitFor()
   assert(await exportButton.isDisabled(), 'Export must be disabled while a repair is active.')
+  assert(
+    await page.locator('#route-profile option[value="driving"]').count() === 0,
+    'Driving must not be available as a route profile.',
+  )
+
+  await page.locator('.map-pin-number').first().waitFor()
+  const controlPointNumbers = await page.locator('.map-pin-number').allTextContents()
+  assert(
+    controlPointNumbers.includes('1') && controlPointNumbers.includes('2'),
+    'Repair boundary points must be numbered in route order.',
+  )
+
+  const addDirectPointButton = page.getByRole('button', { name: 'Add direct trace point' })
+  await addDirectPointButton.click()
+  const mapCanvas = page.locator('.maplibregl-canvas')
+  const mapBounds = await mapCanvas.boundingBox()
+  assert(mapBounds, 'Map canvas must have visible bounds.')
+  await mapCanvas.click({
+    position: {
+      x: Math.round(mapBounds.width * 0.55),
+      y: Math.round(mapBounds.height * 0.55),
+    },
+  })
+
+  const waypointCard = page.locator('.waypoint-card')
+  assert(await waypointCard.count() === 0, 'Creating a waypoint must not open its details card.')
+
+  await page.getByRole('button', { name: 'Finish manual tracing' }).click()
+  await page.locator('.note-good').filter({ hasText: 'Suggested rebuild length' }).waitFor()
+  const waypointMarker = page.locator('.map-marker[data-waypoint-id]')
+  await waypointMarker.waitFor()
+  const waypointBounds = await waypointMarker.boundingBox()
+  const anchorBounds = await page.locator('.map-pin-anchor').boundingBox()
+  assert(waypointBounds && anchorBounds, 'Repair controls must have visible bounds.')
+  await page.mouse.move(
+    Math.round((waypointBounds.x + waypointBounds.width / 2 + anchorBounds.x + anchorBounds.width / 2) / 2),
+    Math.round((waypointBounds.y + waypointBounds.height / 2 + anchorBounds.y + anchorBounds.height / 2) / 2),
+  )
+  await page.locator('.route-insertion-preview-visible').waitFor()
+
+  await waypointMarker.click()
+  await waypointCard.waitFor()
+
+  const dragStart = await waypointMarker.boundingBox()
+  assert(dragStart, 'Waypoint marker must remain visible before dragging.')
+  await page.mouse.move(dragStart.x + dragStart.width / 2, dragStart.y + dragStart.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(dragStart.x + dragStart.width / 2 + 30, dragStart.y + dragStart.height / 2 + 20, { steps: 6 })
+  await page.mouse.up()
+  await waypointCard.waitFor({ state: 'detached' })
+  assert(await waypointCard.count() === 0, 'Dragging a waypoint must not open its details card.')
+
+  await waypointMarker.click()
+  await waypointCard.waitFor()
+  assert(
+    await waypointCard.getByText('Distance', { exact: true }).isVisible(),
+    'Waypoint card must show route distance.',
+  )
+  assert(
+    await waypointCard.getByText('Elevation', { exact: true }).isVisible(),
+    'Waypoint card must show elevation.',
+  )
+  const offGridToggle = waypointCard.getByLabel('Set following segment as off-grid')
+  assert(!(await offGridToggle.isChecked()), 'The segment after a manual point must initially resume road routing.')
+  await offGridToggle.check()
+  assert(await offGridToggle.isChecked(), 'Waypoint card must toggle the following segment to off-grid.')
+  await waypointCard.getByRole('button', { name: 'Remove waypoint' }).click()
+  await waypointCard.waitFor({ state: 'detached' })
+  await page.getByText('Waypoint removed. The joined section now follows mapped roads.', { exact: true }).waitFor()
+
   await cancelRepairButton.click()
   assert(await exportButton.isEnabled(), 'Export must be enabled after the repair is cancelled.')
 

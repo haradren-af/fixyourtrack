@@ -572,6 +572,36 @@
   background: rgba(214, 91, 37, 0.1);
 }
 
+.waypoint-list-button {
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  padding: 10px;
+}
+
+.waypoint-list-number {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 999px;
+  background: #2454d2;
+  color: #ffffff !important;
+  font-size: 0.72rem !important;
+  font-weight: 900;
+}
+
+.waypoint-list-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.waypoint-list-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .severity-badge {
   display: inline-flex;
   min-height: 22px;
@@ -1079,6 +1109,21 @@
   cursor: grabbing;
 }
 
+.route-insertion-preview {
+  display: none;
+  width: 18px;
+  height: 18px;
+  border: 4px solid #ffffff;
+  border-radius: 999px;
+  background: #2454d2;
+  box-shadow: 0 2px 8px rgba(20, 61, 56, 0.32);
+  pointer-events: none;
+}
+
+.route-insertion-preview-visible {
+  display: block;
+}
+
 .map-marker-active .map-pin {
   outline: 4px solid rgba(36, 84, 210, 0.28);
 }
@@ -1123,6 +1168,167 @@
 
 .map-pin-offgrid {
   background: #8f5d1b;
+}
+
+.map-pin-numbered {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  border-width: 2px;
+  place-items: center;
+}
+
+.map-pin-number {
+  color: #ffffff;
+  font-family: var(--sans);
+  font-size: 0.62rem;
+  font-weight: 900;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
+.maplibregl-popup-content {
+  overflow: hidden;
+  padding: 0;
+  border-radius: 8px;
+  background: #fbfaf6;
+  box-shadow: 0 12px 32px rgba(12, 34, 31, 0.22);
+}
+
+.maplibregl-popup {
+  z-index: 700;
+}
+
+.maplibregl-popup-tip {
+  border-top-color: #fbfaf6 !important;
+}
+
+.waypoint-card {
+  width: min(310px, calc(100vw - 32px));
+  color: #20312f;
+  font-family: var(--sans);
+}
+
+.waypoint-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 8px;
+}
+
+.waypoint-card-header h3 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 1.18rem;
+}
+
+.waypoint-card-close {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #50605d;
+  cursor: pointer;
+  font: inherit;
+  font-size: 1.35rem;
+}
+
+.waypoint-card-close:hover {
+  background: rgba(22, 43, 40, 0.08);
+}
+
+.waypoint-card-coordinates {
+  padding: 0 18px 14px;
+  color: #63706d;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.waypoint-card-stats {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 7px 14px;
+  margin: 0;
+  padding: 14px 18px;
+  border-block: 1px solid rgba(22, 43, 40, 0.1);
+}
+
+.waypoint-card-stats dt,
+.waypoint-card-stats dd {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.waypoint-card-stats dt {
+  font-weight: 700;
+}
+
+.waypoint-card-stats dd {
+  color: #53635f;
+}
+
+.waypoint-card-remove {
+  width: calc(100% - 36px);
+  min-height: 40px;
+  margin: 14px 18px;
+  border: 1px solid rgba(22, 43, 40, 0.12);
+  border-radius: 4px;
+  background: #f1efe8;
+  color: #20312f;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+}
+
+.waypoint-card-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 18px;
+  border-top: 1px solid rgba(22, 43, 40, 0.1);
+  cursor: pointer;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.waypoint-card-toggle input {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  margin: 0;
+  appearance: none;
+  border-radius: 999px;
+  background: #a8aeac;
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+
+.waypoint-card-toggle input::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(17, 17, 17, 0.24);
+  content: '';
+  transition: transform 160ms ease;
+}
+
+.waypoint-card-toggle input:checked {
+  background: #d65b25;
+}
+
+.waypoint-card-toggle input:checked::after {
+  transform: translateX(18px);
 }
 
 .maplibregl-ctrl-group {
@@ -1260,9 +1466,36 @@
 }
 
 .theme-dark .map-layer-switch,
-.theme-dark .map-marker-label {
+.theme-dark .map-marker-label,
+.theme-dark .maplibregl-popup-content {
   border-color: rgba(220, 240, 230, 0.16);
   background: rgba(24, 34, 30, 0.96);
+  color: var(--text-h);
+}
+
+.theme-dark .maplibregl-popup-tip {
+  border-top-color: #18221e !important;
+}
+
+.theme-dark .waypoint-card {
+  color: var(--text-h);
+}
+
+.theme-dark .waypoint-card-coordinates,
+.theme-dark .waypoint-card-stats dd,
+.theme-dark .waypoint-card-close {
+  color: #9fb0a8;
+}
+
+.theme-dark .waypoint-card-stats,
+.theme-dark .waypoint-card-toggle {
+  border-color: rgba(220, 240, 230, 0.14);
+}
+
+.theme-dark .waypoint-card-remove,
+.theme-dark .waypoint-card-close:hover {
+  border-color: rgba(220, 240, 230, 0.14);
+  background: #26342e;
   color: var(--text-h);
 }
 

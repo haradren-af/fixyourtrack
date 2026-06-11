@@ -3,6 +3,15 @@ import './App.css'
 import { deleteRepairDraft, loadRepairDraft, saveRepairDraft } from './draftStore'
 import { parseGpxDocument } from './gpx'
 import { translate } from './i18n'
+import {
+  directLegMode,
+  getLegMode,
+  getRouteStartControlId,
+  removeWaypointLeg,
+  routedLegMode,
+  setLegMode,
+  splitLeg,
+} from './routeLegs'
 import { getRoutingRequests, parseRoutingResponse } from './routing'
 import { getSuspiciousSegments } from './trackDetection'
 import {
@@ -36,6 +45,7 @@ function App() {
   const [mapMode, setMapMode] = useState('inspect')
   const [endpoint, setEndpoint] = useState(null)
   const [viaPoints, setViaPoints] = useState([])
+  const [legModes, setLegModes] = useState({})
   const [activeWaypointId, setActiveWaypointId] = useState(null)
   const [routePreview, setRoutePreview] = useState({
     status: 'idle',
@@ -53,6 +63,7 @@ function App() {
   const [availableDraft, setAvailableDraft] = useState(null)
   const [draftSavedAt, setDraftSavedAt] = useState(null)
   const pendingRouteFitRef = useRef(false)
+  const manualTraceAnchorIdRef = useRef(null)
   const workspaceRef = useRef(null)
   const sidebarResizeCleanupRef = useRef(null)
   const [collapsedPanels, setCollapsedPanels] = useState(getStoredCollapsedPanels)
@@ -106,16 +117,16 @@ function App() {
 
     if (rebuildDirection === 'before') {
       return [
-        { id: 'endpoint', lat: endpoint.lat, lon: endpoint.lon, kind: 'endpoint', offGrid: false },
+        { id: 'endpoint', lat: endpoint.lat, lon: endpoint.lon, kind: 'endpoint' },
         ...viaPoints.map((point) => ({ ...point, kind: 'via' })),
-        { id: 'anchor', lat: anchorPoint.lat, lon: anchorPoint.lon, kind: 'anchor', offGrid: false },
+        { id: 'anchor', lat: anchorPoint.lat, lon: anchorPoint.lon, kind: 'anchor' },
       ]
     }
 
     return [
-      { id: 'anchor', lat: anchorPoint.lat, lon: anchorPoint.lon, kind: 'anchor', offGrid: false },
+      { id: 'anchor', lat: anchorPoint.lat, lon: anchorPoint.lon, kind: 'anchor' },
       ...viaPoints.map((point) => ({ ...point, kind: 'via' })),
-      { id: 'endpoint', lat: endpoint.lat, lon: endpoint.lon, kind: 'endpoint', offGrid: false },
+      { id: 'endpoint', lat: endpoint.lat, lon: endpoint.lon, kind: 'endpoint' },
     ]
   }, [anchorPoint, endpoint, rebuildDirection, viaPoints])
 
@@ -130,6 +141,43 @@ function App() {
           distanceMeters: 0,
         }
   ), [controlPoints.length, endpoint, routePreview])
+
+  const routeStartDistanceMeters = useMemo(() => {
+    if (rebuildDirection === 'before' || !anchorPoint) {
+      return 0
+    }
+    if (Number.isFinite(anchorPoint.distance)) {
+      return anchorPoint.distance
+    }
+    return getTrackDistanceToSample(track?.points ?? [], anchorPoint.sampleIndex)
+  }, [anchorPoint, rebuildDirection, track?.points])
+
+  const waypointDetails = useMemo(() => {
+    let cumulativeDistance = routeStartDistanceMeters
+    return viaPoints.map((point, index) => {
+      const segmentDistance = effectiveRoutePreview.segments[index]?.distanceMeters
+      cumulativeDistance = Number.isFinite(cumulativeDistance) && Number.isFinite(segmentDistance)
+        ? cumulativeDistance + segmentDistance
+        : null
+      return {
+        ...point,
+        distanceMeters: cumulativeDistance,
+        elevation: findNearestRecordedElevation(point, track?.points ?? []),
+        isOffGrid: getLegMode(legModes, point.id) === directLegMode,
+        number: index + 2,
+      }
+    })
+  }, [effectiveRoutePreview.segments, legModes, routeStartDistanceMeters, track?.points, viaPoints])
+
+  const waypointCardLabels = useMemo(() => ({
+    close: translate(language, 'closeWaypointCard'),
+    distance: translate(language, 'waypointDistance'),
+    elevation: translate(language, 'waypointElevation'),
+    notAvailable: translate(language, 'notAvailable'),
+    offGridSegment: translate(language, 'setOffGridSegment'),
+    remove: translate(language, 'removeWaypoint'),
+    title: translate(language, 'waypointCardTitle'),
+  }), [language])
 
   const routeWarning = useMemo(() => {
     if (!removedSegmentSamples.length || effectiveRoutePreview.distanceMeters <= 0) {
@@ -225,6 +273,7 @@ function App() {
           middleRepairRange,
           endpoint,
           viaPoints,
+          legModes,
           activeWaypointId,
           mapMode,
           routePreview,
@@ -234,6 +283,7 @@ function App() {
     activeWaypointId,
     endpoint,
     mapMode,
+    legModes,
     middleRepairRange,
     rebuildDirection,
     removedSegmentSamples,
@@ -255,6 +305,12 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem('fixyourtrack-route-profile', routeProfile)
   }, [routeProfile])
+
+  useEffect(() => {
+    if (mapMode !== 'add-offgrid-waypoint') {
+      manualTraceAnchorIdRef.current = null
+    }
+  }, [mapMode])
 
   useEffect(() => {
     window.localStorage.setItem('fixyourtrack-map-layer', mapLayer)
@@ -323,7 +379,7 @@ function App() {
         for (let index = 0; index < controlPoints.length - 1; index += 1) {
           const from = controlPoints[index]
           const to = controlPoints[index + 1]
-          const forceDirect = to.offGrid
+          const forceDirect = getLegMode(legModes, from.id) === directLegMode
           const segment = forceDirect
             ? buildDirectSegment(from, to)
             : await fetchRouteSegment(from, to, routeProfile, abortController.signal)
@@ -372,7 +428,7 @@ function App() {
       cancelled = true
       abortController.abort()
     }
-  }, [controlPoints, endpoint, routeProfile])
+  }, [controlPoints, endpoint, legModes, routeProfile])
 
   async function handleFileChange(event) {
     const file = event.target.files?.[0]
@@ -393,6 +449,7 @@ function App() {
       setMiddleRepairRange(null)
       setEndpoint(null)
       setViaPoints([])
+      setLegModes({})
       setActiveWaypointId(null)
       setMapMode('inspect')
       setRepairHistory([])
@@ -411,6 +468,7 @@ function App() {
       setMiddleRepairRange(null)
       setEndpoint(null)
       setViaPoints([])
+      setLegModes({})
       setActiveWaypointId(null)
       setMapMode('inspect')
       setError(nextError instanceof Error ? nextError.message : 'Could not read the track file.')
@@ -469,6 +527,7 @@ function App() {
     setMiddleRepairRange(null)
     setEndpoint(null)
     setViaPoints([])
+    setLegModes({})
     setActiveWaypointId(null)
     setMapMode('pick-endpoint')
     setFitRequest((current) => current + 1)
@@ -509,6 +568,7 @@ function App() {
     setMiddleRepairRange(null)
     setEndpoint(null)
     setViaPoints([])
+    setLegModes({})
     setActiveWaypointId(null)
     setMapMode('pick-endpoint')
     setFitRequest((current) => current + 1)
@@ -530,6 +590,7 @@ function App() {
     setMiddleRepairRange(null)
     setEndpoint(null)
     setViaPoints([])
+    setLegModes({})
     setActiveWaypointId(null)
     setMapMode('inspect')
     setFitRequest((current) => current + 1)
@@ -568,6 +629,7 @@ function App() {
     setMiddleRepairRange(null)
     setEndpoint(null)
     setViaPoints([])
+    setLegModes({})
     setActiveWaypointId(null)
     setMapMode('inspect')
     setError('')
@@ -606,6 +668,7 @@ function App() {
       setMiddleRepairRange(hasRepairSession ? repairSession.middleRepairRange ?? null : null)
       setEndpoint(hasRepairSession ? repairSession.endpoint ?? null : null)
       setViaPoints(hasRepairSession ? repairSession.viaPoints ?? [] : [])
+      setLegModes(hasRepairSession ? repairSession.legModes ?? {} : {})
       setActiveWaypointId(hasRepairSession ? repairSession.activeWaypointId ?? null : null)
       setMapMode(hasRepairSession ? repairSession.mapMode ?? 'inspect' : 'inspect')
       setRoutePreview(hasRepairSession && repairSession.routePreview
@@ -675,6 +738,7 @@ function App() {
     })
     setEndpoint({ lat: endPoint.lat, lon: endPoint.lon })
     setViaPoints([])
+    setLegModes({})
     setActiveWaypointId(null)
     setMapMode('inspect')
     setError('')
@@ -688,6 +752,7 @@ function App() {
     setMiddleRepairRange(null)
     setEndpoint(null)
     setViaPoints([])
+    setLegModes({})
     setActiveWaypointId(null)
     setMapMode('inspect')
     setError('')
@@ -798,6 +863,7 @@ function App() {
     setMiddleRepairRange(null)
     setEndpoint(null)
     setViaPoints([])
+    setLegModes({})
     setActiveWaypointId(null)
     setMapMode('inspect')
     setError('')
@@ -815,7 +881,13 @@ function App() {
     }
 
     if (mapMode === 'add-offgrid-waypoint' && endpoint) {
-      addWaypointAtLocation(latlng, true)
+      addWaypointAtLocation(latlng, {
+        continueManualTracing: true,
+        insertAfterId: manualTraceAnchorIdRef.current,
+        manualPoint: true,
+        incomingMode: directLegMode,
+        outgoingMode: routedLegMode,
+      })
     }
   }
 
@@ -824,6 +896,7 @@ function App() {
     setEndpoint({ lat: latlng.lat, lon: latlng.lng })
     if (isInitialPlacement) {
       setViaPoints([])
+      setLegModes({})
       setActiveWaypointId(null)
     }
     setMapMode('inspect')
@@ -878,12 +951,27 @@ function App() {
       return
     }
 
-    addWaypointAtLocation(latlng, false, segment.insertAfterId)
+    addWaypointAtLocation(latlng, {
+      insertAfterId: segment.insertAfterId,
+      manualPoint: segment.mode === 'direct',
+      incomingMode: segment.mode,
+      outgoingMode: segment.mode,
+    })
   }
 
-  function addWaypointAtLocation(latlng, offGrid, preferredInsertAfterId = null) {
-    const nextWaypoint = createWaypoint(latlng, offGrid)
-    const insertAfterId = preferredInsertAfterId ?? getNearestRouteInsertAfterId(latlng, effectiveRoutePreview.segments)
+  function addWaypointAtLocation(latlng, {
+    continueManualTracing = false,
+    insertAfterId: preferredInsertAfterId = null,
+    manualPoint = false,
+    incomingMode = null,
+    outgoingMode = null,
+  } = {}) {
+    const nextWaypoint = createWaypoint(latlng, manualPoint)
+    const insertAfterId = preferredInsertAfterId ?? getNearestRouteInsertAfterId(
+      latlng,
+      effectiveRoutePreview.segments,
+      getRouteStartControlId(rebuildDirection),
+    )
     const insertIndex = resolveInsertIndexFromControlId(insertAfterId, viaPoints, rebuildDirection)
 
     setViaPoints((current) => {
@@ -891,10 +979,18 @@ function App() {
       next.splice(insertIndex, 0, nextWaypoint)
       return next
     })
-    setActiveWaypointId(nextWaypoint.id)
-    setMapMode(offGrid ? 'add-offgrid-waypoint' : 'inspect')
+    setLegModes((current) => splitLeg(
+      current,
+      insertAfterId,
+      nextWaypoint.id,
+      incomingMode,
+      outgoingMode,
+    ))
+    setActiveWaypointId(null)
+    manualTraceAnchorIdRef.current = continueManualTracing ? nextWaypoint.id : null
+    setMapMode(continueManualTracing ? 'add-offgrid-waypoint' : 'inspect')
     setMessage(
-      offGrid
+      manualPoint
         ? t('offGridAdded')
         : t('waypointAdded'),
     )
@@ -906,20 +1002,40 @@ function App() {
         ? { ...point, lat: latlng.lat, lon: latlng.lng }
         : point
     )))
-  }
-
-  function setWaypointOffGrid(waypointId, checked) {
-    setViaPoints((current) => current.map((point) => (
-      point.id === waypointId
-        ? { ...point, offGrid: checked }
-        : point
-    )))
+    setMessage(t('waypointMovedPreserved'))
   }
 
   function removeWaypoint(waypointId) {
+    if (manualTraceAnchorIdRef.current === waypointId) {
+      const waypointIndex = viaPoints.findIndex((point) => point.id === waypointId)
+      manualTraceAnchorIdRef.current = waypointIndex > 0
+        ? viaPoints[waypointIndex - 1].id
+        : getRouteStartControlId(rebuildDirection)
+    }
+    setLegModes((current) => removeWaypointLeg(current, viaPoints, waypointId, rebuildDirection))
     setViaPoints((current) => current.filter((point) => point.id !== waypointId))
     setActiveWaypointId((current) => (current === waypointId ? null : current))
     setMessage(t('waypointRemoved'))
+  }
+
+  function toggleRouteLeg(fromId) {
+    const nextMode = getLegMode(legModes, fromId) === directLegMode
+      ? routedLegMode
+      : directLegMode
+    setLegModes((current) => setLegMode(current, fromId, nextMode))
+    setMessage(nextMode === directLegMode ? t('legSetManual') : t('legSetRouted'))
+  }
+
+  function toggleManualTracing() {
+    if (mapMode === 'add-offgrid-waypoint') {
+      manualTraceAnchorIdRef.current = null
+      setMapMode('inspect')
+      return
+    }
+
+    manualTraceAnchorIdRef.current = activeWaypointId
+    setActiveWaypointId(null)
+    setMapMode('add-offgrid-waypoint')
   }
 
   function togglePanel(panelKey) {
@@ -1104,6 +1220,7 @@ function App() {
     setMiddleRepairRange(null)
     setEndpoint(null)
     setViaPoints([])
+    setLegModes({})
     setActiveWaypointId(null)
     setMapMode('inspect')
     setError('')
@@ -1417,7 +1534,6 @@ function App() {
                   >
                     <option value="cycling">{t('cycling')}</option>
                     <option value="walking">{t('walking')}</option>
-                    <option value="driving">{t('driving')}</option>
                   </select>
                 </div>
 
@@ -1436,7 +1552,7 @@ function App() {
                   <button
                     type="button"
                     className="ghost-button"
-                    onClick={() => setMapMode((current) => (current === 'add-offgrid-waypoint' ? 'inspect' : 'add-offgrid-waypoint'))}
+                    onClick={toggleManualTracing}
                     disabled={!endpoint}
                   >
                     {isAddingOffGrid ? t('cancelOffGrid') : t('addOffGrid')}
@@ -1557,21 +1673,25 @@ function App() {
               </button>
             </div>
 
-            {!collapsedPanels.waypoints && viaPoints.length ? (
+            {!collapsedPanels.waypoints && waypointDetails.length ? (
               <div className="segment-list">
-                {viaPoints.map((point, index) => (
+                {waypointDetails.map((point) => (
                   <button
                     key={point.id}
                     type="button"
-                    className={`segment-button ${activeWaypointId === point.id ? 'segment-button-active' : ''}`}
+                    className={`segment-button waypoint-list-button ${activeWaypointId === point.id ? 'segment-button-active' : ''}`}
                     onClick={() => setActiveWaypointId(point.id)}
                   >
-                    <strong>
-                      {point.offGrid
-                        ? t('offGridWaypointNumber', { number: index + 1 })
-                        : t('waypoint', { number: index + 1 })}
-                    </strong>
-                    <span>{formatLatLon(point)}</span>
+                    <span className="waypoint-list-number">{point.number}</span>
+                    <span className="waypoint-list-copy">
+                      <strong>{t('waypoint', { number: point.number })}</strong>
+                      <span>{formatLatLon(point)}</span>
+                      <span>
+                        {formatDistance(point.distanceMeters)}
+                        {' · '}
+                        {formatElevation(point.elevation, t('notAvailable'))}
+                      </span>
+                    </span>
                   </button>
                 ))}
               </div>
@@ -1580,20 +1700,7 @@ function App() {
             ) : null}
 
             {!collapsedPanels.waypoints && activeWaypoint ? (
-              <div className="waypoint-box">
-                <p className="muted-text">{t('waypointSelectedHelp')}</p>
-                <label className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={activeWaypoint.offGrid}
-                    onChange={(event) => setWaypointOffGrid(activeWaypoint.id, event.target.checked)}
-                  />
-                  <span>{t('offGridWaypoint')}</span>
-                </label>
-                <button type="button" className="ghost-button" onClick={() => removeWaypoint(activeWaypoint.id)}>
-                  {t('removeWaypoint')}
-                </button>
-              </div>
+              <p className="muted-text">{t('waypointCardOpen')}</p>
             ) : null}
           </div>
 
@@ -1745,6 +1852,7 @@ function App() {
             onRouteSegmentClick={handleRouteSegmentClick}
             onTrackClick={handleTrackClick}
             onWaypointMove={handleWaypointMove}
+            onWaypointOutgoingModeToggle={toggleRouteLeg}
             onWaypointRemove={removeWaypoint}
             onWaypointSelect={setActiveWaypointId}
             rebuildDirection={rebuildDirection}
@@ -1756,7 +1864,9 @@ function App() {
             track={track}
             highlightedTrackPoints={chartHighlightedPoints}
             viaPoints={viaPoints}
-              waypointLabel={t('waypointLabel')}
+            waypointCardLabels={waypointCardLabels}
+            waypointDetails={waypointDetails}
+            waypointLabel={t('waypointLabel')}
             />
           </Suspense>
         </div>
@@ -1797,7 +1907,7 @@ function getStoredRouteProfile() {
   }
 
   const stored = window.localStorage.getItem('fixyourtrack-route-profile')
-  return ['cycling', 'walking', 'driving'].includes(stored) ? stored : 'cycling'
+  return ['cycling', 'walking'].includes(stored) ? stored : 'cycling'
 }
 
 function getStoredMapLayer() {
@@ -1908,7 +2018,7 @@ function createWaypoint(latlng, offGrid) {
 }
 
 function resolveInsertIndexFromControlId(controlId, viaPoints, rebuildDirection) {
-  const startControlId = rebuildDirection === 'before' ? 'endpoint' : 'anchor'
+  const startControlId = getRouteStartControlId(rebuildDirection)
 
   if (controlId === startControlId) {
     return 0
@@ -1922,9 +2032,9 @@ function resolveInsertIndexFromControlId(controlId, viaPoints, rebuildDirection)
   return waypointIndex + 1
 }
 
-function getNearestRouteInsertAfterId(latlng, segments) {
+function getNearestRouteInsertAfterId(latlng, segments, fallbackInsertAfterId) {
   if (!segments.length) {
-    return 'anchor'
+    return fallbackInsertAfterId
   }
 
   let bestInsertAfterId = segments[0].insertAfterId
@@ -2442,6 +2552,44 @@ function formatDuration(totalSeconds) {
 
 function formatLatLon(point) {
   return `${point.lat.toFixed(5)}, ${point.lon.toFixed(5)}`
+}
+
+function formatElevation(elevation, unavailableLabel) {
+  return Number.isFinite(elevation) ? `~${Math.round(elevation)} m` : unavailableLabel
+}
+
+function findNearestRecordedElevation(point, trackPoints, maxDistanceMeters = 500) {
+  let closestElevation = null
+  let closestDistance = Number.POSITIVE_INFINITY
+
+  for (const candidate of trackPoints) {
+    if (!Number.isFinite(candidate.ele)) {
+      continue
+    }
+
+    const distance = haversineDistance(point, candidate)
+    if (distance < closestDistance) {
+      closestDistance = distance
+      closestElevation = candidate.ele
+    }
+  }
+
+  return closestDistance <= maxDistanceMeters ? closestElevation : null
+}
+
+function getTrackDistanceToSample(points, targetSampleIndex) {
+  let distance = 0
+
+  for (let index = 1; index < points.length; index += 1) {
+    if (points[index].sampleIndex > targetSampleIndex) {
+      break
+    }
+    if (!points[index].segmentStart) {
+      distance += haversineDistance(points[index - 1], points[index])
+    }
+  }
+
+  return distance
 }
 
 function roundCoordinate(value) {

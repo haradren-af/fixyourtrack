@@ -1,18 +1,18 @@
-# FixYourTrack 0.11.0
+# FixYourTrack 0.70.0
 
-This release hardens track repair and export, improves routing resilience, and adds automated verification.
+This release replaces waypoint-level off-grid behavior with explicit per-section routing controls and makes route shaping substantially easier.
 
 Highlights:
 
-- Preserve sensor-only FIT records by assigning repaired GPS positions during GPX export.
-- Preserve timestamps, distance, speed, heart rate, cadence, power, temperature, and GPX segments.
-- Explicitly apply or cancel start/end repairs before export.
-- Resume active repair sessions from validated local drafts.
-- Use profile-aware cycling and walking routing with retries and fallback providers.
-- Preserve exact repair borders instead of accepting router endpoint snapping.
-- Recover safely from malformed drafts and show privacy-safe local crash diagnostics.
-- Load the map, charts, and FIT parser only when needed for faster startup.
-- Run unit, production-build, and stateful browser workflow checks in CI.
-- Run dependency-free tester packages on Windows, Intel Macs, and Apple Silicon Macs.
+- Mix road-following and direct off-grid sections within the same repaired route.
+- Resume road-following automatically after manually tracing an off-grid section.
+- Preserve a section's routing mode while moving its waypoint.
+- Reconnect surrounding points along mapped roads when deleting a waypoint.
+- Use numbered, draggable waypoint markers with distance, elevation, removal, and section-mode controls.
+- Preview waypoint insertion with a marker that follows the route under the pointer.
+- Keep waypoint details closed while creating or dragging points.
+- Restrict navigator profiles to cycling and walking.
+- Preserve section routing modes in local repair drafts.
+- Verify the complete waypoint and off-grid workflow with automated browser tests.
 
 See `CHANGELOG.md` for the complete list of changes and fixes.

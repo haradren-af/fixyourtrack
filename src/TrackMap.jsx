@@ -25,6 +25,7 @@ export default function TrackMap({
   onRouteSegmentClick,
   onTrackClick,
   onWaypointMove,
+  onWaypointOutgoingModeToggle,
   onWaypointRemove,
   onWaypointSelect,
   rebuildDirection,
@@ -35,12 +36,16 @@ export default function TrackMap({
   suspiciousSegments,
   track,
   viaPoints,
+  waypointCardLabels,
+  waypointDetails,
   waypointLabel,
   offGridLabel,
 }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef([])
+  const routeInsertionMarkerRef = useRef(null)
+  const waypointPopupRef = useRef(null)
   const initialMapLayerRef = useRef(mapLayer)
   const initialViewRef = useRef(initialView)
   const previousFitRequestRef = useRef(null)
@@ -55,6 +60,11 @@ export default function TrackMap({
 
   useEffect(() => {
     interactionModeRef.current = interactionMode
+    if (interactionMode !== 'inspect') {
+      routeInsertionMarkerRef.current
+        ?.getElement()
+        .classList.remove('route-insertion-preview-visible')
+    }
   }, [interactionMode])
 
   useEffect(() => {
@@ -64,6 +74,7 @@ export default function TrackMap({
       onRouteSegmentClick,
       onTrackClick,
       onWaypointMove,
+      onWaypointOutgoingModeToggle,
       onWaypointRemove,
       onWaypointSelect,
     }
@@ -73,6 +84,7 @@ export default function TrackMap({
     onRouteSegmentClick,
     onTrackClick,
     onWaypointMove,
+    onWaypointOutgoingModeToggle,
     onWaypointRemove,
     onWaypointSelect,
   ])
@@ -112,7 +124,7 @@ export default function TrackMap({
       if (routeFeature) {
         const segment = routeSegmentsRef.current.find(({ id }) => id === routeFeature.properties?.id)
         if (segment) {
-          handlersRef.current.onRouteSegmentClick(segment, latlng)
+          handlersRef.current.onRouteSegmentClick(segment, getClosestRoutePoint(map, event.point, segment.geometry))
         }
         return
       }
@@ -133,8 +145,47 @@ export default function TrackMap({
       map.getCanvas().style.cursor = ''
     }
 
+    function showRouteInsertionPreview(event) {
+      if (interactionModeRef.current !== 'inspect') {
+        hideRouteInsertionPreview()
+        return
+      }
+
+      const routeFeature = map.queryRenderedFeatures(event.point, {
+        layers: ['route-hitbox'],
+      })[0]
+      const segmentId = routeFeature?.properties?.id
+      const segment = routeSegmentsRef.current.find(({ id }) => id === segmentId)
+      if (!segment) {
+        hideRouteInsertionPreview()
+        return
+      }
+
+      const point = getClosestRoutePoint(map, event.point, segment.geometry)
+      routeInsertionMarkerRef.current
+        ?.setLngLat([point.lng, point.lat])
+        .getElement()
+        .classList.add('route-insertion-preview-visible')
+    }
+
+    function hideRouteInsertionPreview() {
+      routeInsertionMarkerRef.current
+        ?.getElement()
+        .classList.remove('route-insertion-preview-visible')
+    }
+
     map.on('load', () => {
+      const previewElement = document.createElement('div')
+      previewElement.className = 'route-insertion-preview'
+      routeInsertionMarkerRef.current = new maplibregl.Marker({
+        anchor: 'center',
+        element: previewElement,
+      })
+        .setLngLat([initialViewRef.current[1], initialViewRef.current[0]])
+        .addTo(map)
+
       map.on('click', handleClick)
+      map.on('mousemove', showRouteInsertionPreview)
       map.on('mouseenter', 'route-hitbox', showPointer)
       map.on('mouseleave', 'route-hitbox', clearPointer)
       map.on('mouseenter', 'track-hitbox', showPointer)
@@ -149,6 +200,10 @@ export default function TrackMap({
     mapRef.current = map
 
     return () => {
+      waypointPopupRef.current?.remove()
+      waypointPopupRef.current = null
+      routeInsertionMarkerRef.current?.remove()
+      routeInsertionMarkerRef.current = null
       observer?.disconnect()
       markersRef.current.forEach((marker) => marker.remove())
       markersRef.current = []
@@ -200,6 +255,7 @@ export default function TrackMap({
       markersRef.current.push(addMarker(map, anchorPoint, {
         className: 'map-pin-anchor',
         label: anchorLabel,
+        number: rebuildDirection === 'before' ? viaPoints.length + 2 : 1,
       }))
     }
 
@@ -208,16 +264,25 @@ export default function TrackMap({
         className: 'map-pin-endpoint',
         draggable: rebuildDirection !== 'middle',
         label: endpointLabel,
+        number: rebuildDirection === 'before' ? 1 : viaPoints.length + 2,
         onMove: (latlng) => handlersRef.current.onEndpointMove(latlng),
       }))
     }
 
     viaPoints.forEach((point, index) => {
+      const details = waypointDetails.find(({ id }) => id === point.id)
       markersRef.current.push(addMarker(map, point, {
         active: point.id === activeWaypointId,
-        className: point.offGrid ? 'map-pin-offgrid' : 'map-pin-via',
+        className: details?.isOffGrid ? 'map-pin-offgrid' : 'map-pin-via',
         draggable: true,
-        title: `${point.offGrid ? offGridLabel : waypointLabel} ${index + 1}`,
+        number: index + 2,
+        title: `${details?.isOffGrid ? offGridLabel : waypointLabel} ${index + 2}`,
+        waypointId: point.id,
+        onDragEnd: () => handlersRef.current.onWaypointSelect(null),
+        onDragStart: () => {
+          waypointPopupRef.current?.remove()
+          waypointPopupRef.current = null
+        },
         onClick: () => handlersRef.current.onWaypointSelect(point.id),
         onDoubleClick: () => handlersRef.current.onWaypointRemove(point.id),
         onMove: (latlng) => handlersRef.current.onWaypointMove(point.id, latlng),
@@ -241,7 +306,43 @@ export default function TrackMap({
     selectedCutPointLabel,
     viaPoints,
     waypointLabel,
+    waypointDetails,
   ])
+
+  useEffect(() => {
+    const map = mapRef.current
+    const details = waypointDetails.find(({ id }) => id === activeWaypointId)
+    waypointPopupRef.current?.remove()
+    waypointPopupRef.current = null
+
+    if (!mapReady || !map || !details) {
+      return
+    }
+
+    const popup = new maplibregl.Popup({
+      anchor: 'bottom',
+      closeButton: false,
+      closeOnClick: false,
+      maxWidth: '330px',
+      offset: 20,
+    })
+      .setLngLat([details.lon, details.lat])
+      .setDOMContent(createWaypointCard(details, waypointCardLabels, {
+        onClose: () => handlersRef.current.onWaypointSelect(null),
+        onRemove: () => handlersRef.current.onWaypointRemove(details.id),
+        onToggleOffGrid: () => handlersRef.current.onWaypointOutgoingModeToggle(details.id),
+      }))
+      .addTo(map)
+
+    waypointPopupRef.current = popup
+
+    return () => {
+      popup.remove()
+      if (waypointPopupRef.current === popup) {
+        waypointPopupRef.current = null
+      }
+    }
+  }, [activeWaypointId, mapReady, waypointCardLabels, waypointDetails])
 
   useEffect(() => {
     if (!mapReady || !mapRef.current) {
@@ -435,12 +536,22 @@ function setSourceData(map, sourceId, data) {
 function addMarker(map, point, options) {
   const element = document.createElement('div')
   element.className = `map-marker${options.active ? ' map-marker-active' : ''}`
+  let suppressClickUntil = 0
   if (options.title) {
     element.title = options.title
   }
+  if (options.waypointId) {
+    element.dataset.waypointId = options.waypointId
+  }
 
   const pin = document.createElement('div')
-  pin.className = `map-pin ${options.className}`
+  pin.className = `map-pin ${options.className}${options.number ? ' map-pin-numbered' : ''}`
+  if (options.number) {
+    const number = document.createElement('span')
+    number.className = 'map-pin-number'
+    number.textContent = String(options.number)
+    pin.append(number)
+  }
   element.append(pin)
 
   if (options.label) {
@@ -453,7 +564,9 @@ function addMarker(map, point, options) {
   if (options.onClick) {
     element.addEventListener('click', (event) => {
       event.stopPropagation()
-      options.onClick()
+      if (Date.now() >= suppressClickUntil) {
+        options.onClick()
+      }
     })
   }
 
@@ -473,14 +586,122 @@ function addMarker(map, point, options) {
     .setLngLat([point.lon, point.lat])
     .addTo(map)
 
+  marker.on('dragstart', () => {
+    suppressClickUntil = Date.now() + 600
+    options.onDragStart?.()
+  })
+
   if (options.onMove) {
     marker.on('dragend', () => {
+      suppressClickUntil = Date.now() + 600
       const position = marker.getLngLat()
+      options.onDragEnd?.()
       options.onMove({ lat: position.lat, lng: position.lng })
     })
   }
 
   return marker
+}
+
+function createWaypointCard(details, labels, handlers) {
+  const card = document.createElement('section')
+  card.className = 'waypoint-card'
+
+  const header = document.createElement('header')
+  header.className = 'waypoint-card-header'
+  const title = document.createElement('h3')
+  title.textContent = labels.title.replace('{number}', String(details.number))
+  const close = document.createElement('button')
+  close.type = 'button'
+  close.className = 'waypoint-card-close'
+  close.setAttribute('aria-label', labels.close)
+  close.textContent = '×'
+  close.addEventListener('click', handlers.onClose)
+  header.append(title, close)
+
+  const coordinates = document.createElement('div')
+  coordinates.className = 'waypoint-card-coordinates'
+  coordinates.textContent = `${details.lat.toFixed(6)}, ${details.lon.toFixed(6)}`
+
+  const stats = document.createElement('dl')
+  stats.className = 'waypoint-card-stats'
+  appendStat(stats, labels.distance, formatCardDistance(details.distanceMeters))
+  appendStat(stats, labels.elevation, formatCardElevation(details.elevation, labels.notAvailable))
+
+  const remove = document.createElement('button')
+  remove.type = 'button'
+  remove.className = 'waypoint-card-remove'
+  remove.textContent = labels.remove
+  remove.addEventListener('click', handlers.onRemove)
+
+  const offGrid = document.createElement('label')
+  offGrid.className = 'waypoint-card-toggle'
+  const offGridText = document.createElement('span')
+  offGridText.textContent = labels.offGridSegment
+  const offGridInput = document.createElement('input')
+  offGridInput.type = 'checkbox'
+  offGridInput.checked = details.isOffGrid
+  offGridInput.addEventListener('change', handlers.onToggleOffGrid)
+  offGrid.append(offGridText, offGridInput)
+
+  card.append(header, coordinates, stats, remove, offGrid)
+  return card
+}
+
+function appendStat(container, label, value) {
+  const term = document.createElement('dt')
+  term.textContent = label
+  const description = document.createElement('dd')
+  description.textContent = value
+  container.append(term, description)
+}
+
+function formatCardDistance(distanceMeters) {
+  if (!Number.isFinite(distanceMeters)) {
+    return '—'
+  }
+  return distanceMeters >= 1000
+    ? `${(distanceMeters / 1000).toFixed(2)} km`
+    : `${Math.round(distanceMeters)} m`
+}
+
+function formatCardElevation(elevation, notAvailable) {
+  return Number.isFinite(elevation) ? `~${Math.round(elevation)} m` : notAvailable
+}
+
+function getClosestRoutePoint(map, mousePoint, geometry) {
+  let closest = null
+  let closestDistanceSquared = Number.POSITIVE_INFINITY
+
+  for (let index = 0; index < geometry.length - 1; index += 1) {
+    const start = map.project([geometry[index].lon, geometry[index].lat])
+    const end = map.project([geometry[index + 1].lon, geometry[index + 1].lat])
+    const dx = end.x - start.x
+    const dy = end.y - start.y
+    const denominator = dx * dx + dy * dy
+    const ratio = denominator === 0
+      ? 0
+      : Math.max(0, Math.min(1, (
+          ((mousePoint.x - start.x) * dx + (mousePoint.y - start.y) * dy) / denominator
+        )))
+    const projected = {
+      x: start.x + dx * ratio,
+      y: start.y + dy * ratio,
+    }
+    const distanceSquared = (
+      (mousePoint.x - projected.x) ** 2 +
+      (mousePoint.y - projected.y) ** 2
+    )
+
+    if (distanceSquared < closestDistanceSquared) {
+      closestDistanceSquared = distanceSquared
+      closest = map.unproject(projected)
+    }
+  }
+
+  return closest
+    ? { lat: closest.lat, lng: closest.lng }
+    : { lat: geometry[0].lat, lng: geometry[0].lon }
 }
 
 function getTrackBounds(track, routeSegments) {

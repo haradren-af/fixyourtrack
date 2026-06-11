@@ -6,6 +6,31 @@ FixYourTrack uses [Semantic Versioning](https://semver.org/):
 - Minor releases (`0.10.0`) contain meaningful feature batches.
 - Version `1.0.0` will mark the first stable release.
 
+## 0.70.0 - 2026-06-11
+
+### Added
+
+- Per-section road-following and direct off-grid routing modes.
+- Mixed routes that can leave mapped roads manually and resume road-following afterward.
+- Numbered, draggable waypoint markers and compact waypoint details with coordinates, distance, and elevation.
+- Waypoint controls for removal and toggling the following section between road-following and off-grid.
+- A route-following insertion preview marker shown before creating a waypoint.
+- Draft schema version 3 support for persisting section routing modes.
+- Browser regression coverage for waypoint creation, dragging, mode switching, deletion, and insertion preview.
+
+### Changed
+
+- Kept waypoint details closed when creating or dragging a waypoint.
+- Preserved each section's routing mode when inserting or moving waypoints.
+- Reconnected surrounding points along mapped roads after deleting a waypoint.
+- Removed the driving navigator profile; cycling and walking remain available.
+
+### Fixed
+
+- Prevented deletion of an off-grid waypoint from extending its direct routing mode across the newly joined gap.
+- Prevented manual tracing from retaining references to deleted waypoints.
+- Prevented routed waypoint corrections from producing short out-and-back spikes.
+
 ## 0.11.0 - 2026-06-10
 
 ### Added
