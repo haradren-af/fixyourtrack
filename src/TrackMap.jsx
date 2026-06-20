@@ -19,12 +19,15 @@ export default function TrackMap({
   initialView,
   interactionMode,
   layoutSignature,
+  manualMiddleStartLabel,
+  manualMiddleStartPoint,
   mapLayer,
   onEndpointMove,
   onMapClick,
   onRouteSegmentClick,
   onTrackClick,
   onWaypointMove,
+  onWaypointIncomingModeToggle,
   onWaypointOutgoingModeToggle,
   onWaypointRemove,
   onWaypointSelect,
@@ -74,6 +77,7 @@ export default function TrackMap({
       onRouteSegmentClick,
       onTrackClick,
       onWaypointMove,
+      onWaypointIncomingModeToggle,
       onWaypointOutgoingModeToggle,
       onWaypointRemove,
       onWaypointSelect,
@@ -84,6 +88,7 @@ export default function TrackMap({
     onRouteSegmentClick,
     onTrackClick,
     onWaypointMove,
+    onWaypointIncomingModeToggle,
     onWaypointOutgoingModeToggle,
     onWaypointRemove,
     onWaypointSelect,
@@ -244,10 +249,20 @@ export default function TrackMap({
     markersRef.current.forEach((marker) => marker.remove())
     markersRef.current = []
 
-    if (selectedCutPoint) {
+    const selectedIsManualStart = selectedCutPoint && manualMiddleStartPoint
+      && selectedCutPoint.sampleIndex === manualMiddleStartPoint.sampleIndex
+
+    if (selectedCutPoint && !selectedIsManualStart) {
       markersRef.current.push(addMarker(map, selectedCutPoint, {
         className: 'map-pin-cut',
         label: selectedCutPointLabel,
+      }))
+    }
+
+    if (manualMiddleStartPoint) {
+      markersRef.current.push(addMarker(map, manualMiddleStartPoint, {
+        className: 'map-pin-manual-middle-start',
+        label: manualMiddleStartLabel,
       }))
     }
 
@@ -299,6 +314,8 @@ export default function TrackMap({
     anchorPoint,
     endpoint,
     endpointLabel,
+    manualMiddleStartLabel,
+    manualMiddleStartPoint,
     mapReady,
     offGridLabel,
     rebuildDirection,
@@ -330,7 +347,8 @@ export default function TrackMap({
       .setDOMContent(createWaypointCard(details, waypointCardLabels, {
         onClose: () => handlersRef.current.onWaypointSelect(null),
         onRemove: () => handlersRef.current.onWaypointRemove(details.id),
-        onToggleOffGrid: () => handlersRef.current.onWaypointOutgoingModeToggle(details.id),
+        onToggleIncomingOffGrid: () => handlersRef.current.onWaypointIncomingModeToggle(details.incomingLegId),
+        onToggleOutgoingOffGrid: () => handlersRef.current.onWaypointOutgoingModeToggle(details.outgoingLegId),
       }))
       .addTo(map)
 
@@ -634,18 +652,32 @@ function createWaypointCard(details, labels, handlers) {
   remove.textContent = labels.remove
   remove.addEventListener('click', handlers.onRemove)
 
+  const incomingOffGrid = createOffGridToggle(
+    labels.incomingOffGridSegment,
+    details.isIncomingOffGrid,
+    handlers.onToggleIncomingOffGrid,
+  )
+  const outgoingOffGrid = createOffGridToggle(
+    labels.outgoingOffGridSegment,
+    details.isOutgoingOffGrid,
+    handlers.onToggleOutgoingOffGrid,
+  )
+
+  card.append(header, coordinates, stats, remove, incomingOffGrid, outgoingOffGrid)
+  return card
+}
+
+function createOffGridToggle(label, checked, onChange) {
   const offGrid = document.createElement('label')
   offGrid.className = 'waypoint-card-toggle'
   const offGridText = document.createElement('span')
-  offGridText.textContent = labels.offGridSegment
+  offGridText.textContent = label
   const offGridInput = document.createElement('input')
   offGridInput.type = 'checkbox'
-  offGridInput.checked = details.isOffGrid
-  offGridInput.addEventListener('change', handlers.onToggleOffGrid)
+  offGridInput.checked = checked
+  offGridInput.addEventListener('change', onChange)
   offGrid.append(offGridText, offGridInput)
-
-  card.append(header, coordinates, stats, remove, offGrid)
-  return card
+  return offGrid
 }
 
 function appendStat(container, label, value) {

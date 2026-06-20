@@ -1,18 +1,15 @@
-# FixYourTrack 0.70.0
+# FixYourTrack 0.82.0
 
-This release replaces waypoint-level off-grid behavior with explicit per-section routing controls and makes route shaping substantially easier.
+This release focuses on manual control when automatic detection misses a GPS-loss section, and on making mixed road/off-grid editing more predictable.
 
 Highlights:
 
-- Mix road-following and direct off-grid sections within the same repaired route.
-- Resume road-following automatically after manually tracing an off-grid section.
-- Preserve a section's routing mode while moving its waypoint.
-- Reconnect surrounding points along mapped roads when deleting a waypoint.
-- Use numbered, draggable waypoint markers with distance, elevation, removal, and section-mode controls.
-- Preview waypoint insertion with a marker that follows the route under the pointer.
-- Keep waypoint details closed while creating or dragging points.
-- Restrict navigator profiles to cycling and walking.
-- Preserve section routing modes in local repair drafts.
-- Verify the complete waypoint and off-grid workflow with automated browser tests.
+- Manually repair a middle section even when it is not listed in the repair queue.
+- Select two track borders, then replace everything between them with the normal blue editable route.
+- Keep a visible first-border marker while choosing the second manual repair border.
+- Switch either the previous or following section of a waypoint between road-following and off-grid.
+- Avoid short routed spikes caused by map-routing services snapping to disconnected road geometry.
+- Updated English and Russian instructions to describe the actual repair scenarios.
+- Expanded browser smoke checks for bidirectional off-grid waypoint controls.
 
 See `CHANGELOG.md` for the complete list of changes and fixes.

@@ -148,10 +148,12 @@ try {
     await waypointCard.getByText('Elevation', { exact: true }).isVisible(),
     'Waypoint card must show elevation.',
   )
-  const offGridToggle = waypointCard.getByLabel('Set following segment as off-grid')
-  assert(!(await offGridToggle.isChecked()), 'The segment after a manual point must initially resume road routing.')
-  await offGridToggle.check()
-  assert(await offGridToggle.isChecked(), 'Waypoint card must toggle the following segment to off-grid.')
+  const incomingOffGridToggle = waypointCard.getByLabel('Set previous segment as off-grid')
+  const outgoingOffGridToggle = waypointCard.getByLabel('Set following segment as off-grid')
+  assert(await incomingOffGridToggle.isChecked(), 'The segment before a manual point must stay off-grid.')
+  assert(!(await outgoingOffGridToggle.isChecked()), 'The segment after a manual point must initially resume road routing.')
+  await outgoingOffGridToggle.check()
+  assert(await outgoingOffGridToggle.isChecked(), 'Waypoint card must toggle the following segment to off-grid.')
   await waypointCard.getByRole('button', { name: 'Remove waypoint' }).click()
   await waypointCard.waitFor({ state: 'detached' })
   await page.getByText('Waypoint removed. The joined section now follows mapped roads.', { exact: true }).waitFor()

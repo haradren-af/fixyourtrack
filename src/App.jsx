@@ -12,6 +12,7 @@ import {
   setLegMode,
   splitLeg,
 } from './routeLegs'
+import { shouldUseDirectGeometryFallback } from './routeQuality'
 import { getRoutingRequests, parseRoutingResponse } from './routing'
 import { getSuspiciousSegments } from './trackDetection'
 import {
@@ -49,8 +50,10 @@ const instructionContent = {
       {
         title: 'Если плохой участок в середине',
         steps: [
-          'Выберите проблему в “Очереди исправлений” или нажмите “Исправить следующую проблему”.',
-          'Приложение зафиксирует начало и конец повреждённого участка и покажет синюю замену.',
+          'Если участок есть в очереди, выберите проблему или нажмите “Исправить следующую проблему”.',
+          'Если очередь не нашла нужный кусок, кликните первую удобную границу на треке и нажмите “Использовать выбранную точку как первую границу”.',
+          'Кликните вторую границу на треке и нажмите “Исправить участок между выбранными границами”.',
+          'Приложение зафиксирует границы повреждённого участка и покажет синюю замену.',
           'Кликните по синей линии, чтобы добавить точку. Перетащите точку туда, где реально проходил маршрут.',
           'Добавляйте столько точек, сколько нужно. Точки нумеруются по порядку маршрута.',
           'Если GPS начал плыть чуть раньше или позже, используйте “Захватить более ранний дрейф GPS” или “Захватить более поздний дрейф GPS”.',
@@ -65,7 +68,7 @@ const instructionContent = {
           'Когда нужно пройти там, где дороги нет, нажмите “Добавить точку ручной трассировки”.',
           'Каждый следующий клик по карте добавит прямой участок от предыдущей точки.',
           'Когда ручной участок закончился, нажмите “Завершить ручную трассировку”. Дальше маршрут снова будет следовать дорогам.',
-          'Другой способ: кликните по номеру точки и включите “Следующий участок вне дорог” в карточке точки.',
+          'Другой способ: кликните по номеру точки и включите “Предыдущий участок вне дорог” или “Следующий участок вне дорог” в карточке точки.',
         ],
       },
       {
@@ -73,8 +76,8 @@ const instructionContent = {
         steps: [
           'Перетащите номерную точку, чтобы изменить форму маршрута.',
           'Кликните по номеру точки, чтобы открыть карточку.',
-          'В карточке можно удалить точку или переключить следующий участок между дорогами и off-grid.',
-          'Если удалить off-grid точку, соединённый участок снова строится по дорогам. Если нужен прямой участок, включите off-grid заново для нужной точки.',
+          'В карточке можно удалить точку или переключить предыдущий и следующий участки между дорогами и off-grid.',
+          'Если удалить точку рядом с off-grid участком, соединённый участок снова строится по дорогам. Если нужен прямой участок, включите off-grid заново с нужной стороны точки.',
         ],
       },
       {
@@ -115,8 +118,10 @@ const instructionContent = {
       {
         title: 'If the bad section is in the middle',
         steps: [
-          'Select an item in the repair queue, or click “Repair next issue”.',
-          'The app fixes the start and end borders of the damaged section and shows a blue replacement.',
+          'If the section appears in the queue, select it or click “Repair next issue”.',
+          'If the queue missed it, click the first convenient border on the track and click “Use selected point as first border”.',
+          'Click the second border on the track and click “Repair between selected borders”.',
+          'The app fixes the damaged-section borders and shows a blue replacement.',
           'Click the blue line to add a point. Drag the point to where the real route went.',
           'Add as many points as needed. Points are numbered in route order.',
           'If GPS started drifting slightly earlier or later, use “Include earlier GPS drift” or “Include later GPS drift”.',
@@ -131,7 +136,7 @@ const instructionContent = {
           'When the real route goes where no road exists, click “Add direct trace point”.',
           'Each next map click adds a direct section from the previous point.',
           'When the manual section ends, click “Finish manual tracing”. After that the route follows roads again.',
-          'Alternative: click a point number and enable “Set following segment as off-grid” in its card.',
+          'Alternative: click a point number and enable “Set previous segment as off-grid” or “Set following segment as off-grid” in its card.',
         ],
       },
       {
@@ -139,8 +144,8 @@ const instructionContent = {
         steps: [
           'Drag a numbered point to reshape the route.',
           'Click a point number to open its card.',
-          'The card can remove the point or switch the following section between roads and off-grid.',
-          'Deleting an off-grid point rebuilds the joined section along roads. If you still need a direct section, enable off-grid again on the correct point.',
+          'The card can remove the point or switch the previous and following sections between roads and off-grid.',
+          'Deleting a point next to an off-grid section rebuilds the joined section along roads. If you still need a direct section, enable off-grid again on the correct side of the point.',
         ],
       },
       {
@@ -171,6 +176,7 @@ function App() {
   const [track, setTrack] = useState(null)
   const [sourceTrack, setSourceTrack] = useState(null)
   const [selectedCutPointIndex, setSelectedCutPointIndex] = useState(null)
+  const [manualMiddleStartIndex, setManualMiddleStartIndex] = useState(null)
   const [tailAnchorPointIndex, setTailAnchorPointIndex] = useState(null)
   const [removedSegmentSamples, setRemovedSegmentSamples] = useState([])
   const [rebuildDirection, setRebuildDirection] = useState(null)
@@ -245,6 +251,14 @@ function App() {
     return track.points[selectedCutPointIndex] ?? null
   }, [selectedCutPointIndex, track])
 
+  const manualMiddleStartPoint = useMemo(() => {
+    if (!track || manualMiddleStartIndex === null) {
+      return null
+    }
+
+    return track.points[manualMiddleStartIndex] ?? null
+  }, [manualMiddleStartIndex, track])
+
   const controlPoints = useMemo(() => {
     if (!anchorPoint || !endpoint) {
       return []
@@ -291,6 +305,11 @@ function App() {
     let cumulativeDistance = routeStartDistanceMeters
     return viaPoints.map((point, index) => {
       const segmentDistance = effectiveRoutePreview.segments[index]?.distanceMeters
+      const incomingLegId = index === 0
+        ? getRouteStartControlId(rebuildDirection)
+        : viaPoints[index - 1].id
+      const isIncomingOffGrid = getLegMode(legModes, incomingLegId) === directLegMode
+      const isOutgoingOffGrid = getLegMode(legModes, point.id) === directLegMode
       cumulativeDistance = Number.isFinite(cumulativeDistance) && Number.isFinite(segmentDistance)
         ? cumulativeDistance + segmentDistance
         : null
@@ -298,18 +317,23 @@ function App() {
         ...point,
         distanceMeters: cumulativeDistance,
         elevation: findNearestRecordedElevation(point, track?.points ?? []),
-        isOffGrid: getLegMode(legModes, point.id) === directLegMode,
+        incomingLegId,
+        isIncomingOffGrid,
+        isOffGrid: isIncomingOffGrid || isOutgoingOffGrid,
+        isOutgoingOffGrid,
+        outgoingLegId: point.id,
         number: index + 2,
       }
     })
-  }, [effectiveRoutePreview.segments, legModes, routeStartDistanceMeters, track?.points, viaPoints])
+  }, [effectiveRoutePreview.segments, legModes, rebuildDirection, routeStartDistanceMeters, track?.points, viaPoints])
 
   const waypointCardLabels = useMemo(() => ({
     close: translate(language, 'closeWaypointCard'),
     distance: translate(language, 'waypointDistance'),
     elevation: translate(language, 'waypointElevation'),
+    incomingOffGridSegment: translate(language, 'setIncomingOffGridSegment'),
     notAvailable: translate(language, 'notAvailable'),
-    offGridSegment: translate(language, 'setOffGridSegment'),
+    outgoingOffGridSegment: translate(language, 'setOutgoingOffGridSegment'),
     remove: translate(language, 'removeWaypoint'),
     title: translate(language, 'waypointCardTitle'),
   }), [language])
@@ -593,6 +617,7 @@ function App() {
       setSourceTrack(loadedTrack)
       setTrack(loadedTrack)
       setSelectedCutPointIndex(null)
+      setManualMiddleStartIndex(null)
       setTailAnchorPointIndex(null)
       setRemovedSegmentSamples([])
       setRebuildDirection(null)
@@ -612,6 +637,7 @@ function App() {
       setSourceTrack(null)
       setTrack(null)
       setSelectedCutPointIndex(null)
+      setManualMiddleStartIndex(null)
       setTailAnchorPointIndex(null)
       setRemovedSegmentSamples([])
       setRebuildDirection(null)
@@ -671,6 +697,7 @@ function App() {
     pushRepairHistory('deleteAfter', track)
     setTrack(trimmedTrack)
     setSelectedCutPointIndex(trimmedTrack.points.length - 1)
+    setManualMiddleStartIndex(null)
     setTailAnchorPointIndex(trimmedTrack.points.length - 1)
     setRemovedSegmentSamples(removedSamples)
     setRebuildDirection('after')
@@ -712,6 +739,7 @@ function App() {
     pushRepairHistory('deleteBefore', track)
     setTrack(trimmedTrack)
     setSelectedCutPointIndex(0)
+    setManualMiddleStartIndex(null)
     setTailAnchorPointIndex(0)
     setRemovedSegmentSamples(removedSamples)
     setRebuildDirection('before')
@@ -734,6 +762,7 @@ function App() {
     pushRepairHistory('restore', track)
     setTrack(sourceTrack)
     setSelectedCutPointIndex(null)
+    setManualMiddleStartIndex(null)
     setTailAnchorPointIndex(null)
     setRemovedSegmentSamples([])
     setRebuildDirection(null)
@@ -773,6 +802,7 @@ function App() {
     setTrack(previous.track)
     setRepairHistory((current) => current.slice(0, -1))
     setSelectedCutPointIndex(null)
+    setManualMiddleStartIndex(null)
     setTailAnchorPointIndex(null)
     setRemovedSegmentSamples([])
     setRebuildDirection(null)
@@ -812,6 +842,7 @@ function App() {
       setSourceTrack(restoredSource)
       setTrack(restoredWorking)
       setSelectedCutPointIndex(hasRepairSession ? repairSession.selectedCutPointIndex ?? null : null)
+      setManualMiddleStartIndex(null)
       setTailAnchorPointIndex(hasRepairSession ? repairSession.tailAnchorPointIndex ?? null : null)
       setRemovedSegmentSamples(hasRepairSession ? repairSession.removedSegmentSamples ?? [] : [])
       setRebuildDirection(hasRepairSession ? repairSession.rebuildDirection : null)
@@ -861,24 +892,25 @@ function App() {
     }
   }
 
-  function beginMiddleRepair(segment) {
+  function beginMiddleRepair(segment, messageKey = 'middleActive') {
     if (!track) {
-      return
+      return false
     }
 
     if (rebuildDirection) {
       setError(t('finishCurrentRepair'))
-      return
+      return false
     }
 
     const startPoint = track.points[segment.startIndex]
     const endPoint = track.points[segment.endIndex]
     if (!startPoint || !endPoint || endPoint.sampleIndex <= startPoint.sampleIndex) {
       setError(t('invalidBorders'))
-      return
+      return false
     }
 
     setSelectedCutPointIndex(null)
+    setManualMiddleStartIndex(null)
     setTailAnchorPointIndex(segment.startIndex)
     setRemovedSegmentSamples(track.samples.slice(startPoint.sampleIndex, endPoint.sampleIndex + 1))
     setRebuildDirection('middle')
@@ -892,11 +924,46 @@ function App() {
     setActiveWaypointId(null)
     setMapMode('inspect')
     setError('')
-    setMessage(t('middleActive'))
+    setMessage(t(messageKey))
+    return true
+  }
+
+  function setManualMiddleStartFromCutPoint() {
+    if (selectedCutPointIndex === null) {
+      setMessage(t('clickCloser'))
+      return
+    }
+
+    setManualMiddleStartIndex(selectedCutPointIndex)
+    setMessage(t('manualMiddleStartSelected', { point: selectedCutPointIndex + 1 }))
+  }
+
+  function beginManualMiddleRepair() {
+    if (!track || manualMiddleStartIndex === null || selectedCutPointIndex === null) {
+      setError(t('manualMiddleNeedSecond'))
+      return
+    }
+
+    if (manualMiddleStartIndex === selectedCutPointIndex) {
+      setError(t('manualMiddleNeedSecond'))
+      return
+    }
+
+    const startIndex = Math.min(manualMiddleStartIndex, selectedCutPointIndex)
+    const endIndex = Math.max(manualMiddleStartIndex, selectedCutPointIndex)
+    if (beginMiddleRepair({ startIndex, endIndex }, 'manualMiddleActive')) {
+      setManualMiddleStartIndex(null)
+    }
+  }
+
+  function cancelManualMiddleSelection() {
+    setManualMiddleStartIndex(null)
+    setMessage(t('manualMiddleCancelled'))
   }
 
   function cancelMiddleRepair() {
     setTailAnchorPointIndex(null)
+    setManualMiddleStartIndex(null)
     setRemovedSegmentSamples([])
     setRebuildDirection(null)
     setMiddleRepairRange(null)
@@ -1008,6 +1075,7 @@ function App() {
     })
     setTrack(repairedTrack)
     setTailAnchorPointIndex(null)
+    setManualMiddleStartIndex(null)
     setRemovedSegmentSamples([])
     setRebuildDirection(null)
     setMiddleRepairRange(null)
@@ -1078,6 +1146,17 @@ function App() {
 
     if (rebuildDirection === 'middle') {
       setMessage(t('clickBlueThread'))
+      return
+    }
+
+    if (manualMiddleStartIndex !== null) {
+      const nearestPointIndex = findNearestPointIndex(track.points, latlng, 160)
+      if (nearestPointIndex === null) {
+        setMessage(t('clickCloser'))
+        return
+      }
+
+      selectCutPoint(nearestPointIndex)
       return
     }
 
@@ -1364,6 +1443,7 @@ function App() {
 
   function clearRepairSession() {
     setSelectedCutPointIndex(null)
+    setManualMiddleStartIndex(null)
     setTailAnchorPointIndex(null)
     setRemovedSegmentSamples([])
     setRebuildDirection(null)
@@ -1574,6 +1654,40 @@ function App() {
                       })}
                     </div>
                   ) : null}
+
+                  <div className="manual-middle-box">
+                    <div className="step-title">{t('manualMiddleTitle')}</div>
+                    <p className="muted-text">{t('manualMiddleHelp')}</p>
+                    {manualMiddleStartPoint ? (
+                      <div className="note note-neutral">
+                        {t('manualMiddleStartPoint', {
+                          point: manualMiddleStartIndex + 1,
+                          location: formatLatLon(manualMiddleStartPoint),
+                        })}
+                      </div>
+                    ) : null}
+                    <div className="stack">
+                      {!manualMiddleStartPoint ? (
+                        <button type="button" className="ghost-button" onClick={setManualMiddleStartFromCutPoint} disabled={!selectedCutPoint}>
+                          {t('setManualMiddleStart')}
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            className="primary-button"
+                            onClick={beginManualMiddleRepair}
+                            disabled={!selectedCutPoint || selectedCutPointIndex === manualMiddleStartIndex}
+                          >
+                            {t('repairManualMiddle')}
+                          </button>
+                          <button type="button" className="ghost-button" onClick={cancelManualMiddleSelection}>
+                            {t('cancelManualMiddle')}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </>
             ) : !collapsedPanels.track ? (
@@ -2035,38 +2149,41 @@ function App() {
           ) : null}
           <Suspense fallback={<div className="map-loading">{t('loading')}</div>}>
             <TrackMap
-            activeWaypointId={activeWaypointId}
-            anchorPoint={anchorPoint}
-            anchorLabel={rebuildDirection === 'middle' ? t('repairStartBorder') : t('lastKnownPoint')}
-            endpoint={endpoint}
-            endpointLabel={endpointLabel}
-            fitRequest={fitRequest}
-            hasTrackEdits={hasTrackEdits}
-            initialView={initialView}
-            interactionMode={mapMode}
-            layoutSignature={layoutSignature}
-            mapLayer={mapLayer}
-            offGridLabel={t('offGridLabel')}
-            onEndpointMove={placeEndpoint}
-            onMapClick={handleMapClick}
-            onRouteSegmentClick={handleRouteSegmentClick}
-            onTrackClick={handleTrackClick}
-            onWaypointMove={handleWaypointMove}
-            onWaypointOutgoingModeToggle={toggleRouteLeg}
-            onWaypointRemove={removeWaypoint}
-            onWaypointSelect={setActiveWaypointId}
-            rebuildDirection={rebuildDirection}
-            routeSegments={effectiveRoutePreview.segments}
-            selectedCutPoint={selectedCutPoint}
-            selectedCutPointLabel={t('cutPoint')}
-            sourceTrack={sourceTrack}
-            suspiciousSegments={suspiciousSegments}
-            track={track}
-            highlightedTrackPoints={chartHighlightedPoints}
-            viaPoints={viaPoints}
-            waypointCardLabels={waypointCardLabels}
-            waypointDetails={waypointDetails}
-            waypointLabel={t('waypointLabel')}
+              activeWaypointId={activeWaypointId}
+              anchorPoint={anchorPoint}
+              anchorLabel={rebuildDirection === 'middle' ? t('repairStartBorder') : t('lastKnownPoint')}
+              endpoint={endpoint}
+              endpointLabel={endpointLabel}
+              fitRequest={fitRequest}
+              hasTrackEdits={hasTrackEdits}
+              highlightedTrackPoints={chartHighlightedPoints}
+              initialView={initialView}
+              interactionMode={mapMode}
+              layoutSignature={layoutSignature}
+              manualMiddleStartLabel={t('manualMiddleStartMarker')}
+              manualMiddleStartPoint={manualMiddleStartPoint}
+              mapLayer={mapLayer}
+              offGridLabel={t('offGridLabel')}
+              onEndpointMove={placeEndpoint}
+              onMapClick={handleMapClick}
+              onRouteSegmentClick={handleRouteSegmentClick}
+              onTrackClick={handleTrackClick}
+              onWaypointIncomingModeToggle={toggleRouteLeg}
+              onWaypointMove={handleWaypointMove}
+              onWaypointOutgoingModeToggle={toggleRouteLeg}
+              onWaypointRemove={removeWaypoint}
+              onWaypointSelect={setActiveWaypointId}
+              rebuildDirection={rebuildDirection}
+              routeSegments={effectiveRoutePreview.segments}
+              selectedCutPoint={selectedCutPoint}
+              selectedCutPointLabel={t('cutPoint')}
+              sourceTrack={sourceTrack}
+              suspiciousSegments={suspiciousSegments}
+              track={track}
+              viaPoints={viaPoints}
+              waypointCardLabels={waypointCardLabels}
+              waypointDetails={waypointDetails}
+              waypointLabel={t('waypointLabel')}
             />
           </Suspense>
         </div>
@@ -2326,6 +2443,17 @@ async function fetchRouteSegment(from, to, profile, signal) {
           lon: coordinate[0],
         }))
         const geometry = anchorRouteGeometry(routeGeometry, from, to)
+        if (shouldUseDirectGeometryFallback(from, to, geometry)) {
+          const fallbackGeometry = [
+            { lat: from.lat, lon: from.lon },
+            { lat: to.lat, lon: to.lon },
+          ]
+          return {
+            mode: 'routed',
+            geometry: fallbackGeometry,
+            distanceMeters: getPolylineLength(fallbackGeometry),
+          }
+        }
         return {
           mode: 'routed',
           geometry,

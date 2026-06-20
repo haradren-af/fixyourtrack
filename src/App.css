@@ -442,6 +442,12 @@
   margin-top: 12px;
 }
 
+.manual-middle-box {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(22, 43, 40, 0.1);
+}
+
 .field-group {
   display: grid;
   gap: 8px;
@@ -1254,6 +1260,12 @@
   background: #cf4920;
 }
 
+.map-pin-manual-middle-start {
+  width: 18px;
+  height: 18px;
+  background: #6b4aa2;
+}
+
 .map-pin-anchor {
   background: #1d5f56;
 }
@@ -1532,6 +1544,10 @@
 .theme-dark .note-neutral {
   background: rgba(111, 153, 211, 0.14);
   color: #b9d5f9;
+}
+
+.theme-dark .manual-middle-box {
+  border-color: rgba(220, 240, 230, 0.14);
 }
 
 .theme-dark .mode-chip-active,

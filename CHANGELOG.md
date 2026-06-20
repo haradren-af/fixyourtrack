@@ -6,6 +6,27 @@ FixYourTrack uses [Semantic Versioning](https://semver.org/):
 - Minor releases (`0.10.0`) contain meaningful feature batches.
 - Version `1.0.0` will mark the first stable release.
 
+## 0.82.0 - 2026-06-20
+
+### Added
+
+- Manual middle repair for GPS-loss sections that are not detected automatically: select two track borders and replace everything between them.
+- A visible first-border marker while manually selecting a middle repair interval.
+- Scenario-based in-app instructions for automatic middle repair, manual middle repair, off-grid sections, point editing, and export.
+- Bidirectional off-grid controls in waypoint details for both the previous and following route sections.
+- Route-quality fallback that avoids short routed spikes caused by routing services snapping to detached road geometry.
+
+### Changed
+
+- Off-grid instructions now describe section-side controls instead of treating a waypoint as globally off-grid.
+- Manual middle-border selection no longer triggers automatic suspicious-segment repair while the user is choosing the second border.
+- Browser smoke coverage now verifies both previous-section and following-section off-grid controls.
+
+### Fixed
+
+- Fixed cases where deleting or editing waypoints around off-grid sections could leave the route hard to return to a road-following shape.
+- Fixed routed waypoint corrections that produced sharp unremovable out-and-back corners near buildings, paths, or disconnected mapped roads.
+
 ## 0.70.0 - 2026-06-11
 
 ### Added
