@@ -142,6 +142,108 @@
   outline-offset: 2px;
 }
 
+.instruction-button {
+  font-weight: 700;
+}
+
+.instruction-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: start center;
+  padding: 22px;
+  overflow-y: auto;
+  background: rgba(16, 24, 22, 0.48);
+}
+
+.instruction-sheet {
+  width: min(1040px, 100%);
+  max-height: calc(100dvh - 44px);
+  overflow: auto;
+  border: 1px solid rgba(22, 43, 40, 0.16);
+  border-radius: 4px;
+  background: #f6f4ed;
+  box-shadow: 0 18px 55px rgba(17, 17, 17, 0.24);
+  color: var(--text);
+}
+
+.instruction-sheet-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid rgba(22, 43, 40, 0.12);
+  background: inherit;
+}
+
+.instruction-sheet-header h2 {
+  margin: 0;
+  color: var(--text-h);
+  font-size: clamp(1.1rem, 1.9vw, 1.55rem);
+  line-height: 1.05;
+}
+
+.instruction-sheet-header p:not(.eyebrow) {
+  max-width: 68ch;
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.instruction-close {
+  display: grid;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid rgba(22, 43, 40, 0.14);
+  border-radius: 4px;
+  background: #fbfaf6;
+  color: var(--text-h);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.instruction-scenarios {
+  display: grid;
+  gap: 1px;
+  padding: 1px;
+  background: rgba(22, 43, 40, 0.1);
+}
+
+.instruction-scenario {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 16px 20px;
+  background: #f6f4ed;
+}
+
+.instruction-scenario h3 {
+  margin: 0;
+  color: var(--text-h);
+  font-size: 1rem;
+}
+
+.instruction-scenario ol {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.instruction-scenario li {
+  line-height: 1.38;
+}
+
 .eyebrow {
   display: flex;
   grid-column: 1 / -1;
@@ -1359,6 +1461,7 @@
 
 .theme-dark .language-picker,
 .theme-dark .theme-toggle,
+.theme-dark .instruction-close,
 .theme-dark .panel-toggle,
 .theme-dark .stats-grid div,
 .theme-dark .inspector-grid div,
@@ -1384,9 +1487,28 @@
 }
 
 .theme-dark .panel-toggle:hover,
+.theme-dark .instruction-close:hover,
 .theme-dark .ghost-button:hover,
 .theme-dark .segment-button:hover {
   background: #2b3a34;
+}
+
+.theme-dark .instruction-backdrop {
+  background: rgba(3, 8, 7, 0.64);
+}
+
+.theme-dark .instruction-sheet,
+.theme-dark .instruction-scenario {
+  border-color: rgba(220, 240, 230, 0.14);
+  background: #18221e;
+}
+
+.theme-dark .instruction-sheet-header {
+  border-color: rgba(220, 240, 230, 0.14);
+}
+
+.theme-dark .instruction-scenarios {
+  background: rgba(220, 240, 230, 0.12);
 }
 
 .theme-dark .stats-grid dt,
@@ -1609,6 +1731,26 @@
     grid-column: 1;
     grid-row: auto;
     flex-wrap: wrap;
+  }
+
+  .instruction-backdrop {
+    padding: 10px;
+  }
+
+  .instruction-sheet {
+    max-height: calc(100dvh - 20px);
+  }
+
+  .instruction-sheet-header {
+    padding: 14px;
+  }
+
+  .instruction-scenario {
+    padding: 14px;
+  }
+
+  .instruction-scenario ol {
+    padding-left: 1.2rem;
   }
 
   .hero-actions > .checkbox-row-compact,

@@ -29,10 +29,145 @@ const TrackCharts = lazy(() => import('./TrackCharts'))
 const TrackMap = lazy(() => import('./TrackMap'))
 const initialView = [55.751244, 37.618423]
 const minimumSidebarWidth = 380
+const instructionContent = {
+  ru: {
+    button: 'Инструкция',
+    title: 'Как чинить трек',
+    intro: 'Выберите сценарий, который похож на вашу поломку. Важно: сначала закончите активное исправление, потом переходите к следующему.',
+    scenarios: [
+      {
+        title: 'Если потерян кусок в начале или в конце',
+        steps: [
+          'Загрузите GPX или FIT.',
+          'Кликните по последней надёжной точке перед плохим концом или по первой надёжной точке после плохого начала.',
+          'Для потерянного начала нажмите “Удалить всё до точки обрезки”. Для потерянного конца нажмите “Удалить всё после точки обрезки”.',
+          'Кликните на карте, где должен быть реальный старт или финиш.',
+          'Проверьте синюю предложенную линию. Если надо, кликните по линии, добавьте точки и перетащите их на реальный путь.',
+          'Когда линия стала правильной, нажмите “Применить восстановленный участок”.',
+        ],
+      },
+      {
+        title: 'Если плохой участок в середине',
+        steps: [
+          'Выберите проблему в “Очереди исправлений” или нажмите “Исправить следующую проблему”.',
+          'Приложение зафиксирует начало и конец повреждённого участка и покажет синюю замену.',
+          'Кликните по синей линии, чтобы добавить точку. Перетащите точку туда, где реально проходил маршрут.',
+          'Добавляйте столько точек, сколько нужно. Точки нумеруются по порядку маршрута.',
+          'Если GPS начал плыть чуть раньше или позже, используйте “Захватить более ранний дрейф GPS” или “Захватить более поздний дрейф GPS”.',
+          'Когда участок выглядит правильно, нажмите “Применить исправление участка”.',
+        ],
+      },
+      {
+        title: 'Если нужен off-grid участок',
+        steps: [
+          'Начните обычное исправление начала, конца или середины.',
+          'До места, где есть дороги или тропы на карте, работайте обычными точками на синей линии.',
+          'Когда нужно пройти там, где дороги нет, нажмите “Добавить точку ручной трассировки”.',
+          'Каждый следующий клик по карте добавит прямой участок от предыдущей точки.',
+          'Когда ручной участок закончился, нажмите “Завершить ручную трассировку”. Дальше маршрут снова будет следовать дорогам.',
+          'Другой способ: кликните по номеру точки и включите “Следующий участок вне дорог” в карточке точки.',
+        ],
+      },
+      {
+        title: 'Если нужно поправить или удалить точки',
+        steps: [
+          'Перетащите номерную точку, чтобы изменить форму маршрута.',
+          'Кликните по номеру точки, чтобы открыть карточку.',
+          'В карточке можно удалить точку или переключить следующий участок между дорогами и off-grid.',
+          'Если удалить off-grid точку, соединённый участок снова строится по дорогам. Если нужен прямой участок, включите off-grid заново для нужной точки.',
+        ],
+      },
+      {
+        title: 'Как экспортировать',
+        steps: [
+          'Сначала примените или отмените все активные исправления. Пока исправление открыто, экспорт заблокирован.',
+          'Если нужна коррекция высоты по рельефу, включите её в “Настройках”.',
+          'Нажмите “Экспортировать исправленный GPX”.',
+          'Полученный GPX можно загружать в Strava, Komoot и другие сервисы.',
+        ],
+      },
+      {
+        title: 'Важное ограничение',
+        steps: [
+          'Если начало трека полностью отсутствует в файле, приложение пока не может создать полноценный новый старт.',
+          'Причина: в файле нет записей времени, скорости, пульса, мощности и дистанции для отсутствующего участка.',
+          'Если GPS-точки плохие, но записи в файле есть, такой участок можно заменить. Если записей вообще нет, сейчас можно только продолжить работу с имеющейся частью трека.',
+        ],
+      },
+    ],
+  },
+  en: {
+    button: 'Instructions',
+    title: 'How to repair a track',
+    intro: 'Pick the scenario that matches your broken track. Finish the current repair before starting the next one.',
+    scenarios: [
+      {
+        title: 'If a piece is missing at the start or end',
+        steps: [
+          'Load a GPX or FIT file.',
+          'Click the last trusted point before a bad ending, or the first trusted point after a bad start.',
+          'For a missing start, click “Delete everything before cut point”. For a missing end, click “Delete everything after cut point”.',
+          'Click the map where the real start or finish should be.',
+          'Check the blue suggested line. If needed, click the line, add points, and drag them onto the real route.',
+          'When the line is correct, click “Apply rebuilt segment”.',
+        ],
+      },
+      {
+        title: 'If the bad section is in the middle',
+        steps: [
+          'Select an item in the repair queue, or click “Repair next issue”.',
+          'The app fixes the start and end borders of the damaged section and shows a blue replacement.',
+          'Click the blue line to add a point. Drag the point to where the real route went.',
+          'Add as many points as needed. Points are numbered in route order.',
+          'If GPS started drifting slightly earlier or later, use “Include earlier GPS drift” or “Include later GPS drift”.',
+          'When the section looks correct, click “Apply middle segment”.',
+        ],
+      },
+      {
+        title: 'If you need an off-grid section',
+        steps: [
+          'Start a normal repair for the start, end, or middle.',
+          'Use normal blue-line points while mapped roads or paths exist.',
+          'When the real route goes where no road exists, click “Add direct trace point”.',
+          'Each next map click adds a direct section from the previous point.',
+          'When the manual section ends, click “Finish manual tracing”. After that the route follows roads again.',
+          'Alternative: click a point number and enable “Set following segment as off-grid” in its card.',
+        ],
+      },
+      {
+        title: 'If you need to adjust or delete points',
+        steps: [
+          'Drag a numbered point to reshape the route.',
+          'Click a point number to open its card.',
+          'The card can remove the point or switch the following section between roads and off-grid.',
+          'Deleting an off-grid point rebuilds the joined section along roads. If you still need a direct section, enable off-grid again on the correct point.',
+        ],
+      },
+      {
+        title: 'How to export',
+        steps: [
+          'Apply or cancel every active repair first. Export is blocked while a repair is open.',
+          'If terrain elevation correction is needed, enable it in Settings.',
+          'Click “Export cleaned GPX”.',
+          'Upload the exported GPX to Strava, Komoot, or another service.',
+        ],
+      },
+      {
+        title: 'Important limit',
+        steps: [
+          'If the track start is completely absent from the file, the app cannot yet create a full new start.',
+          'Reason: the file has no time, speed, heart-rate, power, or distance records for that missing section.',
+          'If GPS positions are wrong but records still exist, that section can be replaced. If records do not exist at all, only the existing recorded part can be repaired right now.',
+        ],
+      },
+    ],
+  },
+}
 
 function App() {
   const [language, setLanguage] = useState(getStoredLanguage)
   const [theme, setTheme] = useState(getStoredTheme)
+  const [isInstructionOpen, setIsInstructionOpen] = useState(false)
   const [track, setTrack] = useState(null)
   const [sourceTrack, setSourceTrack] = useState(null)
   const [selectedCutPointIndex, setSelectedCutPointIndex] = useState(null)
@@ -301,6 +436,21 @@ function App() {
     window.localStorage.setItem('fixyourtrack-theme', theme)
     document.documentElement.dataset.theme = theme
   }, [theme])
+
+  useEffect(() => {
+    if (!isInstructionOpen) {
+      return undefined
+    }
+
+    function handleInstructionKeyDown(event) {
+      if (event.key === 'Escape') {
+        setIsInstructionOpen(false)
+      }
+    }
+
+    window.addEventListener('keydown', handleInstructionKeyDown)
+    return () => window.removeEventListener('keydown', handleInstructionKeyDown)
+  }, [isInstructionOpen])
 
   useEffect(() => {
     window.localStorage.setItem('fixyourtrack-route-profile', routeProfile)
@@ -1245,6 +1395,7 @@ function App() {
   const middleEndPointIndex = middleRepairRange && track
     ? track.points.findIndex((point) => point.sampleIndex === middleRepairRange.endSampleIndex)
     : -1
+  const instruction = instructionContent[language] ?? instructionContent.en
 
   return (
     <div className={`app-shell theme-${theme}`}>
@@ -1257,6 +1408,14 @@ function App() {
 
         <div className="hero-actions">
           <div className="hero-actions-row">
+            <button
+              type="button"
+              className="ghost-button instruction-button"
+              onClick={() => setIsInstructionOpen(true)}
+            >
+              {instruction.button}
+            </button>
+
             <label className="file-picker">
               <input type="file" accept=".gpx,.fit" onChange={handleFileChange} />
               <span>{t('loadTrack')}</span>
@@ -1304,6 +1463,47 @@ function App() {
           ) : null}
         </div>
       </section>
+
+      {isInstructionOpen ? (
+        <div className="instruction-backdrop" onClick={() => setIsInstructionOpen(false)}>
+          <article
+            className="instruction-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="instruction-sheet-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="instruction-sheet-header">
+              <div>
+                <p className="eyebrow">FixYourTrack</p>
+                <h2 id="instruction-sheet-title">{instruction.title}</h2>
+                <p>{instruction.intro}</p>
+              </div>
+              <button
+                type="button"
+                className="instruction-close"
+                aria-label="Close instructions"
+                onClick={() => setIsInstructionOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="instruction-scenarios">
+              {instruction.scenarios.map((scenario) => (
+                <section className="instruction-scenario" key={scenario.title}>
+                  <h3>{scenario.title}</h3>
+                  <ol>
+                    {scenario.steps.map((step) => (
+                      <li key={step}>{step}</li>
+                    ))}
+                  </ol>
+                </section>
+              ))}
+            </div>
+          </article>
+        </div>
+      ) : null}
 
       <section
         className={`workspace${isResizingSidebar ? ' workspace-resizing' : ''}`}

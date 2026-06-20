@@ -30,6 +30,40 @@ try {
 
   const exportButton = page.getByRole('button', { name: 'Export cleaned GPX' })
   assert(await exportButton.isDisabled(), 'Export must be disabled before a track is loaded.')
+  const instructionButton = page.locator('.instruction-button')
+  assert(await instructionButton.isVisible(), 'Instruction button must be visible before loading a track.')
+  assert((await instructionButton.textContent())?.trim() === 'Instructions', 'Instruction button must match English UI.')
+  await instructionButton.click()
+  const instructionSheet = page.locator('.instruction-sheet')
+  await instructionSheet.waitFor()
+  assert(await page.getByText('How to repair a track', { exact: true }).isVisible(), 'Instruction sheet must include English title.')
+  assert(
+    await page.getByText('If a piece is missing at the start or end', { exact: true }).isVisible(),
+    'Instruction sheet must describe the start/end repair scenario.',
+  )
+  assert(
+    await page.getByText('Как чинить трек', { exact: true }).count() === 0,
+    'English instruction sheet must not show Russian content.',
+  )
+  await page.mouse.click(8, 8)
+  await instructionSheet.waitFor({ state: 'detached' })
+
+  await page.locator('.language-picker select').selectOption('ru')
+  assert((await instructionButton.textContent())?.trim() === 'Инструкция', 'Instruction button must match Russian UI.')
+  await instructionButton.click()
+  await instructionSheet.waitFor()
+  assert(await page.getByText('Как чинить трек', { exact: true }).isVisible(), 'Instruction sheet must include Russian title.')
+  assert(
+    await page.getByText('Если потерян кусок в начале или в конце', { exact: true }).isVisible(),
+    'Instruction sheet must describe the Russian start/end repair scenario.',
+  )
+  assert(
+    await page.getByText('How to repair a track', { exact: true }).count() === 0,
+    'Russian instruction sheet must not show English content.',
+  )
+  await page.mouse.click(8, 8)
+  await instructionSheet.waitFor({ state: 'detached' })
+  await page.locator('.language-picker select').selectOption('en')
 
   await page.locator('input[type="file"]').setInputFiles(fixturePath)
   await page.getByText('Browser fixture', { exact: true }).waitFor()
