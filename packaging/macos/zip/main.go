@@ -43,10 +43,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer file.Close()
-
 	writer := zip.NewWriter(file)
-	defer writer.Close()
 
 	parent := filepath.Dir(sourcePath)
 	for _, path := range paths {
@@ -65,17 +62,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		header.Name = name
-		if info.IsDir() {
-			header.Name += "/"
-			header.SetMode(os.ModeDir | 0o755)
-		} else if isExecutable(name) {
-			header.SetMode(0o755)
-			header.Method = zip.Deflate
-		} else {
-			header.SetMode(0o644)
-			header.Method = zip.Deflate
-		}
+		configureArchiveHeader(header, name, info.IsDir())
 
 		entryWriter, err := writer.CreateHeader(header)
 		if err != nil {
@@ -98,9 +85,49 @@ func main() {
 			log.Fatal(closeErr)
 		}
 	}
+
+	if err := writer.Close(); err != nil {
+		_ = file.Close()
+		log.Fatal(err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		log.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		log.Fatal(err)
+	}
+
+	archive, err := zip.OpenReader(*output)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if len(archive.File) != len(paths) {
+		_ = archive.Close()
+		log.Fatalf("ZIP verification found %d entries, expected %d", len(archive.File), len(paths))
+	}
+	if err := archive.Close(); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func isExecutable(name string) bool {
 	base := filepath.Base(name)
 	return strings.HasSuffix(base, ".command") || strings.HasPrefix(base, "fixyourtrack-server-")
+}
+
+func configureArchiveHeader(header *zip.FileHeader, name string, isDirectory bool) {
+	header.Name = name
+	if isDirectory {
+		header.Name += "/"
+		header.SetMode(os.ModeDir | 0o755)
+		return
+	}
+
+	header.Method = zip.Deflate
+	if isExecutable(name) {
+		header.SetMode(0o755)
+		return
+	}
+	header.SetMode(0o644)
 }

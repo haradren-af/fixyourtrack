@@ -6,6 +6,62 @@ FixYourTrack uses [Semantic Versioning](https://semver.org/):
 - Minor releases (`0.10.0`) contain meaningful feature batches.
 - Version `1.0.0` will mark the first stable release.
 
+## 0.83.0 - 2026-07-21
+
+### Added
+
+- A fully isolated Create Route workspace with an accessible Repair/Create mode switch, start/finish placement, ordered waypoints, coordinate entry, route extension, reverse, return-to-start, undo/redo, and direct/off-grid tracing.
+- Versioned named route projects with search, revision-safe autosave, duplicate, archive, restore, permanent delete, cross-window conflict recovery, and active-project restoration after restart.
+- Offline restoration of validated resolved-route geometry tied to an exact route-plan fingerprint.
+- Routing deadlines and budgets for controls, provider calls, response bytes, geometry, cache size, and total preview size.
+- GPX route export with fixed decimal coordinates and deterministic 10,000-point output limit.
+- Bundle-size budgets and high-severity dependency auditing in CI.
+- Single-writer Create Route draft locking, ordered autosave draining, a bounded page-exit emergency journal, and explicit lock-loss recovery that preserves competing versions.
+- Generated third-party notices and a CycloneDX SBOM in application packages and release assets.
+- Automated package-server security tests and browser coverage for blocked storage, failed replacement uploads, modal focus, document language, and mobile touch targets.
+- Clear warnings when local draft saving is unavailable, when replacing the active track, and when a track file exceeds the 50 MB safety limit.
+
+### Changed
+
+- Reduced route recalculation latency by batching consecutive road-following controls, reusing unchanged legs, debouncing edits, and bounding provider work.
+- Removed large-track edit hot paths by updating only changed MapLibre sources, keeping charts on the applied track until repair confirmation, memoizing stable chart inputs and waypoint elevations, and replacing repeated route scans with cumulative-distance binary search.
+- Bounded chart rendering and map highlighting with deterministic sampling that preserves selected endpoints.
+- Reorganized the application header into stable control groups and a single prioritized feedback rail for recovery, errors, activity, and persistence state.
+- Kept Repair and Create headers at the same compact desktop height, with responsive whole-group wrapping and 44-pixel mobile targets.
+- Expanded the deterministic browser workflow to cover route planning, safe route export, Create/Repair state isolation, and project create/rename/archive/restore/open behavior.
+- Coordinated shared-provider routing request starts per origin, enforced minimum request intervals, and bounded route caching and geometry-derived distance.
+- Removed the anonymous elevation fallback and bounded terrain correction by operation/request deadlines, cancellation, response size, content type, and plausible elevation range.
+- Made release publication a two-job, least-privilege process that builds and checks every asset, verifies checksums, publishes a draft, downloads it, and verifies it again before release.
+- Made large repair drafts fail visibly instead of silently truncating track or active-repair data.
+- Kept packaged launches on a deterministic local origin so browser drafts and preferences remain available between sessions.
+- Updated the locked Vite and Babel toolchain to patched versions with no known npm audit vulnerabilities.
+- Made the macOS package builder repair incomplete cached Go toolchains automatically.
+
+### Fixed
+
+- Kept a route visible and editable when a point cannot be snapped to a mapped or permitted road, while clearly marking the unresolved leg.
+- Allowed waypoint details to close by clicking elsewhere and kept the details card inside the visible map viewport near every screen edge.
+- Prevented long Repair status messages, saved-state labels, and localized action text from clipping without a full-text affordance.
+- Prevented Vite development security policy from blocking the React refresh preamble and leaving a blank gray page; added a rendered-startup smoke check.
+- Prevented header errors, export cancellation, and draft recovery from creating duplicate or unplanned extra rows.
+- Prevented unsupported, corrupt, or temporarily unreadable Create Route drafts from being overwritten during startup.
+- Prevented corrupt, future-version, and in-flight Repair drafts from being silently deleted or overwritten; explicit replacement now waits behind an ordered latest-wins save barrier.
+- Preserved valid legacy Repair drafts that predate per-leg routing modes and rejected inconsistent middle-repair previews before they can reach rendering.
+- Rejected lossy or malformed persisted route plans in both Create Route drafts and named projects, while preserving valid emergency journals when IndexedDB recovery fails.
+- Prevented older in-flight draft saves, late saves from a previous project association, and stale cross-window writers from overwriting newer route state.
+- Prevented archived projects from being renamed or saved and preserved both sides of project and draft conflicts for explicit recovery.
+- Prevented stale routed geometry from becoming briefly exportable after a route edit.
+- Preserved multi-word route-name entry and the current name across structural undo/redo.
+- Preserved keyboard focus when a waypoint opens its map details and centered restored single-point drafts safely.
+- Kept mobile route status overlays clear of map attribution.
+- Preserved the current track when a replacement file fails to parse.
+- Hardened GPX and draft validation, IndexedDB transaction completion, portable export filenames, and extreme-distance calculations.
+- Added local-server Host validation, traversal protection, restrictive methods, missing-asset responses, browser security headers, version/revision health checks, server timeouts, and bounded Windows logs.
+- Hardened macOS shutdown process selection and package ZIP finalization and verification.
+- Bound and fully streamed every release ZIP entry during verification, and required both platform archives to match the exact current Git revision.
+- Prevented fixed GPX coordinates near zero from being emitted in exponent notation and prevented large profile charts from exceeding JavaScript argument limits.
+- Trapped and restored keyboard focus in the instructions dialog and enlarged small mobile controls.
+
 ## 0.82.0 - 2026-06-20
 
 ### Added

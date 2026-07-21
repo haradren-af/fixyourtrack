@@ -1,16 +1,41 @@
+param(
+  [ValidateRange(1024, 65535)]
+  [int]$Port = 4173
+)
+
 $ErrorActionPreference = "Stop"
 
 $runtimeRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $packageRoot = Split-Path -Parent $runtimeRoot
 $appRoot = [System.IO.Path]::GetFullPath((Join-Path $packageRoot "app"))
+$appRootPrefix = $appRoot.TrimEnd("\") + "\"
 $pidPath = Join-Path $runtimeRoot "server.pid"
 $urlPath = Join-Path $runtimeRoot "server.url"
 $logPath = Join-Path $runtimeRoot "server.log"
+$versionPath = Join-Path $packageRoot "VERSION.txt"
 $listener = $null
+$port = $Port
+$contentSecurityPolicy = "default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.openstreetmap.org https://server.arcgisonline.com; connect-src 'self' https://tile.openstreetmap.org https://server.arcgisonline.com https://router.project-osrm.org https://brouter.de https://routing.openstreetmap.de https://api.open-elevation.com; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
+function Get-PackageHealthToken {
+  if (-not (Test-Path -LiteralPath $versionPath -PathType Leaf)) {
+    throw "VERSION.txt was not found."
+  }
+  $content = Get-Content -LiteralPath $versionPath
+  $version = ($content | Where-Object { $_ -match '^Version: ' } | Select-Object -First 1) -replace '^Version: ', ''
+  $revision = ($content | Where-Object { $_ -match '^Revision: ' } | Select-Object -First 1) -replace '^Revision: ', ''
+  if (-not $version -or -not $revision) {
+    throw "VERSION.txt does not contain a version and revision."
+  }
+  return "FixYourTrack/$version/$revision"
+}
 
 function Write-ServerLog {
   param([string]$Message)
 
+  if ((Test-Path -LiteralPath $logPath) -and (Get-Item -LiteralPath $logPath).Length -gt 1MB) {
+    Set-Content -LiteralPath $logPath -Value "" -Encoding UTF8
+  }
   "$([DateTime]::Now.ToString('s')) $Message" | Add-Content -LiteralPath $logPath -Encoding UTF8
 }
 
@@ -30,28 +55,35 @@ function Get-ContentType {
   }
 }
 
+function Set-SecurityHeaders {
+  param([System.Net.HttpListenerResponse]$Response)
+
+  $Response.Headers["Content-Security-Policy"] = $contentSecurityPolicy
+  $Response.Headers["Cross-Origin-Opener-Policy"] = "same-origin"
+  $Response.Headers["Cross-Origin-Resource-Policy"] = "same-origin"
+  $Response.Headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+  $Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+  $Response.Headers["X-Content-Type-Options"] = "nosniff"
+  $Response.Headers["X-Frame-Options"] = "DENY"
+}
+
 try {
   if (-not (Test-Path (Join-Path $appRoot "index.html"))) {
     throw "app\index.html was not found."
   }
+  $healthResponse = Get-PackageHealthToken
 
-  for ($port = 4173; $port -le 4183; $port += 1) {
-    $candidate = New-Object System.Net.HttpListener
-    $candidate.Prefixes.Add("http://127.0.0.1:$port/")
-    try {
-      $candidate.Start()
-      $listener = $candidate
-      $url = "http://127.0.0.1:$port/"
-      break
-    }
-    catch {
-      $candidate.Close()
-    }
+  $listener = New-Object System.Net.HttpListener
+  $listener.Prefixes.Add("http://127.0.0.1:$port/")
+  try {
+    $listener.Start()
   }
-
-  if (-not $listener) {
-    throw "No free local port was found between 4173 and 4183."
+  catch {
+    $listener.Close()
+    $listener = $null
+    throw "Local port $port is unavailable. Close the program using it, then start FixYourTrack again."
   }
+  $url = "http://127.0.0.1:$port/"
 
   Set-Content -LiteralPath $pidPath -Value $PID -Encoding ASCII
   Set-Content -LiteralPath $urlPath -Value $url -Encoding ASCII
@@ -59,40 +91,74 @@ try {
 
   while ($listener.IsListening) {
     $context = $listener.GetContext()
-    $requestPath = [System.Uri]::UnescapeDataString($context.Request.Url.AbsolutePath)
+    try {
+      Set-SecurityHeaders $context.Response
+      $context.Response.Headers["Cache-Control"] = "no-store"
 
-    if ($requestPath -eq "/__health") {
-      $healthBytes = [System.Text.Encoding]::UTF8.GetBytes("FixYourTrack")
-      $context.Response.ContentType = "text/plain; charset=utf-8"
-      $context.Response.ContentLength64 = $healthBytes.Length
-      $context.Response.OutputStream.Write($healthBytes, 0, $healthBytes.Length)
-      $context.Response.OutputStream.Close()
-      continue
-    }
+      if ($context.Request.UserHostName -ne "127.0.0.1:$port") {
+        $context.Response.StatusCode = 421
+        $context.Response.Close()
+        continue
+      }
 
-    if ([string]::IsNullOrWhiteSpace($requestPath) -or $requestPath -eq "/") {
-      $requestPath = "/index.html"
-    }
+      if ($context.Request.HttpMethod -notin @("GET", "HEAD")) {
+        $context.Response.StatusCode = 405
+        $context.Response.Headers["Allow"] = "GET, HEAD"
+        $context.Response.Close()
+        continue
+      }
 
-    $relativePath = $requestPath.TrimStart("/").Replace("/", "\")
-    $fullPath = [System.IO.Path]::GetFullPath((Join-Path $appRoot $relativePath))
+      $requestPath = [System.Uri]::UnescapeDataString($context.Request.Url.AbsolutePath)
+      if ($requestPath -eq "/__health") {
+        $healthBytes = [System.Text.Encoding]::UTF8.GetBytes($healthResponse)
+        $context.Response.ContentType = "text/plain; charset=utf-8"
+        $context.Response.ContentLength64 = $healthBytes.Length
+        if ($context.Request.HttpMethod -ne "HEAD") {
+          $context.Response.OutputStream.Write($healthBytes, 0, $healthBytes.Length)
+        }
+        $context.Response.Close()
+        continue
+      }
 
-    if (-not $fullPath.StartsWith($appRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-      $context.Response.StatusCode = 403
+      if ([string]::IsNullOrWhiteSpace($requestPath) -or $requestPath -eq "/") {
+        $requestPath = "/index.html"
+      }
+
+      $relativePath = $requestPath.TrimStart("/").Replace("/", "\")
+      $fullPath = [System.IO.Path]::GetFullPath((Join-Path $appRoot $relativePath))
+      $isInsideApp = $fullPath.Equals($appRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $fullPath.StartsWith($appRootPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+      if (-not $isInsideApp) {
+        $context.Response.StatusCode = 403
+        $context.Response.Close()
+        continue
+      }
+
+      if (-not (Test-Path $fullPath -PathType Leaf)) {
+        if ([System.IO.Path]::HasExtension($requestPath)) {
+          $context.Response.StatusCode = 404
+          $context.Response.Close()
+          continue
+        }
+        $fullPath = Join-Path $appRoot "index.html"
+      }
+
+      $bytes = [System.IO.File]::ReadAllBytes($fullPath)
+      $context.Response.ContentType = Get-ContentType $fullPath
+      $context.Response.ContentLength64 = $bytes.Length
+      if ($context.Request.HttpMethod -ne "HEAD") {
+        $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+      }
       $context.Response.Close()
-      continue
     }
-
-    if (-not (Test-Path $fullPath -PathType Leaf)) {
-      $fullPath = Join-Path $appRoot "index.html"
+    catch {
+      Write-ServerLog "Request failed: $($_.Exception.Message)"
+      try {
+        $context.Response.StatusCode = 400
+        $context.Response.Close()
+      }
+      catch {}
     }
-
-    $bytes = [System.IO.File]::ReadAllBytes($fullPath)
-    $context.Response.ContentType = Get-ContentType $fullPath
-    $context.Response.ContentLength64 = $bytes.Length
-    $context.Response.Headers["Cache-Control"] = "no-store"
-    $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
-    $context.Response.OutputStream.Close()
   }
 }
 catch {

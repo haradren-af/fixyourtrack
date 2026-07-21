@@ -7,6 +7,20 @@ $serverScript = Join-Path $runtimeRoot "FixYourTrack.Server.ps1"
 $urlPath = Join-Path $runtimeRoot "server.url"
 $pidPath = Join-Path $runtimeRoot "server.pid"
 $logPath = Join-Path $runtimeRoot "server.log"
+$versionPath = Join-Path $packageRoot "VERSION.txt"
+
+function Get-ExpectedHealthToken {
+  if (-not (Test-Path -LiteralPath $versionPath -PathType Leaf)) {
+    return $null
+  }
+  $content = Get-Content -LiteralPath $versionPath
+  $version = ($content | Where-Object { $_ -match '^Version: ' } | Select-Object -First 1) -replace '^Version: ', ''
+  $revision = ($content | Where-Object { $_ -match '^Revision: ' } | Select-Object -First 1) -replace '^Revision: ', ''
+  if (-not $version -or -not $revision) {
+    return $null
+  }
+  return "FixYourTrack/$version/$revision"
+}
 
 function Get-RunningUrl {
   if (-not (Test-Path $urlPath)) {
@@ -16,7 +30,7 @@ function Get-RunningUrl {
   $url = (Get-Content -LiteralPath $urlPath -Raw).Trim()
   try {
     $response = Invoke-WebRequest -UseBasicParsing ($url + "__health") -TimeoutSec 2
-    if ($response.Content -eq "FixYourTrack") {
+    if ($response.Content -eq (Get-ExpectedHealthToken)) {
       return $url
     }
   }
@@ -27,7 +41,7 @@ function Get-RunningUrl {
   return $null
 }
 
-if (-not (Test-Path $appIndex) -or -not (Test-Path $serverScript)) {
+if (-not (Test-Path $appIndex) -or -not (Test-Path $serverScript) -or -not (Get-ExpectedHealthToken)) {
   Write-Error "This FixYourTrack folder is incomplete. Extract the complete ZIP archive."
 }
 

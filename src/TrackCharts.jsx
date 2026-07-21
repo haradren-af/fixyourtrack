@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { getSelectedProfilePoints } from './trackChartData'
 
 const MINIMUM_WIDTH = 320
+const MAXIMUM_RENDERED_PROFILE_POINTS = 5000
 const HEIGHT = 160
 const PADDING = {
   top: 30,
@@ -35,19 +37,21 @@ const chartDefinitions = [
 
 const altitudeDefinition = chartDefinitions.find(({ key }) => key === 'altitude')
 
-export default function TrackCharts({ onSelectionChange, samples, t }) {
+function TrackCharts({ onSelectionChange, samples, t }) {
   const [axis, setAxis] = useState('distance')
   const [selection, setSelection] = useState(null)
   const profile = useMemo(() => buildTrackProfile(samples), [samples])
-  const hasTimeAxis = profile.some((point) => Number.isFinite(point.time))
+  const { availableCharts, hasTimeAxis } = useMemo(() => ({
+    availableCharts: chartDefinitions.filter(({ key }) => (
+      profile.some((point) => Number.isFinite(point[key]))
+    )),
+    hasTimeAxis: profile.some((point) => Number.isFinite(point.time)),
+  }), [profile])
   const activeAxis = axis === 'time' && hasTimeAxis ? 'time' : 'distance'
-  const availableCharts = chartDefinitions.filter(({ key }) => (
-    profile.some((point) => Number.isFinite(point[key]))
-  ))
 
   useEffect(() => {
-    onSelectionChange?.(getSelectedProfilePoints(profile, axis, selection))
-  }, [axis, onSelectionChange, profile, selection])
+    onSelectionChange?.(getSelectedProfilePoints(profile, activeAxis, selection))
+  }, [activeAxis, onSelectionChange, profile, selection])
 
   useEffect(() => () => onSelectionChange?.([]), [onSelectionChange])
 
@@ -100,15 +104,18 @@ export default function TrackCharts({ onSelectionChange, samples, t }) {
   )
 }
 
+export default memo(TrackCharts)
+
 function ProfileChart({ axis, definition, profile, selection, setSelection, t }) {
   const chartRef = useRef(null)
   const dragStartRef = useRef(null)
   const [measuredWidth, setMeasuredWidth] = useState(MINIMUM_WIDTH)
   const width = Math.max(MINIMUM_WIDTH, Math.round(measuredWidth))
-  const points = profile.filter((point) => (
-    Number.isFinite(point[axis]) && Number.isFinite(point[definition.key])
-  ))
-  const sampledPoints = downsample(points, Math.max(360, Math.round(width * 1.5)))
+  const sampledPoints = useMemo(() => downsampleMatching(
+    profile,
+    getChartSampleLimit(width),
+    (point) => Number.isFinite(point[axis]) && Number.isFinite(point[definition.key]),
+  ), [axis, definition.key, profile, width])
 
   useEffect(() => {
     const chart = chartRef.current
@@ -123,6 +130,21 @@ function ProfileChart({ axis, definition, profile, selection, setSelection, t })
 
     return () => observer.disconnect()
   }, [])
+
+  const altitudeBackground = useMemo(() => {
+    if (definition.key !== 'speed' || !sampledPoints.length) {
+      return null
+    }
+
+    const sampledAxisValues = sampledPoints.map((point) => point[axis])
+    return buildAltitudeBackground(
+      profile,
+      axis,
+      Math.min(...sampledAxisValues),
+      Math.max(...sampledAxisValues),
+      width,
+    )
+  }, [axis, definition.key, profile, sampledPoints, width])
 
   if (!sampledPoints.length) {
     return null
@@ -142,18 +164,8 @@ function ProfileChart({ axis, definition, profile, selection, setSelection, t })
   const areaPath = `${linePath} L ${width - PADDING.right} ${chartBottom} L ${PADDING.left} ${chartBottom} Z`
   const yTicks = [yMax, (yMax + yMin) / 2, yMin]
   const xTicks = buildTicks(xMin, xMax, width >= 700 ? 7 : width >= 480 ? 5 : 3)
-  const altitudeBackground = definition.key === 'speed'
-    ? buildAltitudeBackground(profile, axis, xMin, xMax, width)
-    : null
   const selectedRange = getSelectedRange(selection, xMin, xMax)
-  const selectedPoints = selectedRange
-    ? profile.filter((point) => (
-      Number.isFinite(point[axis]) &&
-      point[axis] >= selectedRange.start &&
-      point[axis] <= selectedRange.end
-    ))
-    : profile
-  const stats = buildChartStats(definition.key, selectedPoints, t)
+  const stats = buildChartStats(definition.key, profile, t, axis, selectedRange)
   const selectionX = selectedRange
     ? scale(selectedRange.start, xMin, xMax, PADDING.left, width - PADDING.right)
     : null
@@ -310,9 +322,14 @@ function buildTrackProfile(samples) {
     return []
   }
 
-  const firstValidTime = samples
-    .map((sample) => parseTime(sample.time))
-    .find(Number.isFinite)
+  let firstValidTime = null
+  for (const sample of samples) {
+    const timestamp = parseTime(sample.time)
+    if (Number.isFinite(timestamp)) {
+      firstValidTime = timestamp
+      break
+    }
+  }
   let cumulativeDistance = 0
 
   return samples.map((sample, index) => {
@@ -364,14 +381,15 @@ function buildPath(points, axis, valueKey, xMin, xMax, yMin, yMax, width) {
 }
 
 function buildAltitudeBackground(profile, axis, xMin, xMax, width) {
-  const points = downsample(
-    profile.filter((point) => (
+  const points = downsampleMatching(
+    profile,
+    getChartSampleLimit(width),
+    (point) => (
       Number.isFinite(point[axis]) &&
       point[axis] >= xMin &&
       point[axis] <= xMax &&
       Number.isFinite(point.altitude)
-    )),
-    Math.max(360, Math.round(width * 1.5)),
+    ),
   )
   if (!points.length) {
     return null
@@ -409,115 +427,113 @@ function getSelectedRange(selection, minimum, maximum) {
   }
 }
 
-function getSelectedProfilePoints(profile, axis, selection) {
-  if (!selection || !profile.length) {
-    return []
-  }
-
-  const axisValues = profile.map((point) => point[axis])
-  const validValues = axisValues.filter(Number.isFinite)
-  if (!validValues.length) {
-    return []
-  }
-
-  const range = getSelectedRange(selection, Math.min(...validValues), Math.max(...validValues))
-  let startIndex = findClosestProfileIndex(profile, axis, range.start)
-  let endIndex = findClosestProfileIndex(profile, axis, range.end)
-  if (startIndex > endIndex) {
-    [startIndex, endIndex] = [endIndex, startIndex]
-  }
-
-  return profile
-    .slice(startIndex, endIndex + 1)
-    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lon))
-    .map(({ lat, lon }) => ({ lat, lon }))
-}
-
-function findClosestProfileIndex(profile, axis, target) {
-  let closestIndex = 0
-  let closestDistance = Number.POSITIVE_INFINITY
-
-  profile.forEach((point, index) => {
-    if (!Number.isFinite(point[axis])) {
-      return
-    }
-
-    const distance = Math.abs(point[axis] - target)
-    if (distance < closestDistance) {
-      closestDistance = distance
-      closestIndex = index
-    }
-  })
-
-  return closestIndex
-}
-
-function buildChartStats(key, points, t) {
+function buildChartStats(key, profile, t, axis, selectedRange) {
   if (key === 'altitude') {
-    const altitudes = points.map((point) => point.altitude).filter(Number.isFinite)
     let uphill = 0
     let downhill = 0
-    for (let index = 1; index < points.length; index += 1) {
-      const previousAltitude = points[index - 1].altitude
-      const currentAltitude = points[index].altitude
-      if (!Number.isFinite(previousAltitude) || !Number.isFinite(currentAltitude)) {
+    let highest = Number.NEGATIVE_INFINITY
+    let lowest = Number.POSITIVE_INFINITY
+    let previousAltitude = null
+    let hasPreviousPoint = false
+
+    for (const point of profile) {
+      if (!isPointInRange(point, axis, selectedRange)) {
         continue
       }
 
-      const difference = currentAltitude - previousAltitude
-      if (difference > 0) {
-        uphill += difference
-      } else {
-        downhill += Math.abs(difference)
+      const currentAltitude = point.altitude
+      if (Number.isFinite(currentAltitude)) {
+        highest = Math.max(highest, currentAltitude)
+        lowest = Math.min(lowest, currentAltitude)
+        if (hasPreviousPoint && Number.isFinite(previousAltitude)) {
+          const difference = currentAltitude - previousAltitude
+          if (difference > 0) {
+            uphill += difference
+          } else {
+            downhill += Math.abs(difference)
+          }
+        }
       }
+      previousAltitude = currentAltitude
+      hasPreviousPoint = true
     }
 
     return [
       { label: t('chartUphill'), value: formatMeters(uphill) },
       { label: t('chartDownhill'), value: formatMeters(downhill) },
-      { label: t('chartHighest'), value: formatMeters(Math.max(...altitudes)) },
-      { label: t('chartLowest'), value: formatMeters(Math.min(...altitudes)) },
+      { label: t('chartHighest'), value: formatMeters(highest) },
+      { label: t('chartLowest'), value: formatMeters(lowest) },
     ]
   }
 
   if (key === 'speed') {
-    const speeds = points.map((point) => point.speed).filter(Number.isFinite)
-    const elapsed = getElapsedTime(points)
+    let earliestTime = Number.POSITIVE_INFINITY
+    let latestTime = Number.NEGATIVE_INFINITY
+    let movingTime = 0
+    let previousPoint = null
+    let speedCount = 0
+    let speedTotal = 0
+    let timeCount = 0
+
+    for (const point of profile) {
+      if (!isPointInRange(point, axis, selectedRange)) {
+        continue
+      }
+
+      if (Number.isFinite(point.speed)) {
+        speedTotal += point.speed
+        speedCount += 1
+      }
+      if (Number.isFinite(point.time)) {
+        earliestTime = Math.min(earliestTime, point.time)
+        latestTime = Math.max(latestTime, point.time)
+        timeCount += 1
+      }
+      if (previousPoint) {
+        const elapsed = point.time - previousPoint.time
+        if (Number.isFinite(elapsed) && elapsed > 0 && elapsed < 300 && point.speed > 1) {
+          movingTime += elapsed
+        }
+      }
+      previousPoint = point
+    }
+
+    const elapsed = timeCount > 1 ? latestTime - earliestTime : null
     return [
-      { label: t('chartAverageSpeed'), value: speeds.length ? `${formatYValue(average(speeds), key)} km/h` : '--' },
-      { label: t('chartMovingTime'), value: formatDuration(getMovingTime(points)) },
+      { label: t('chartAverageSpeed'), value: speedCount ? `${formatYValue(speedTotal / speedCount, key)} km/h` : '--' },
+      { label: t('chartMovingTime'), value: formatDuration(movingTime) },
       { label: t('chartElapsedTime'), value: formatDuration(elapsed) },
     ]
   }
 
-  const heartRates = points.map((point) => point.heartRate).filter(Number.isFinite)
+  let heartRateCount = 0
+  let heartRateTotal = 0
+  let maximumHeartRate = Number.NEGATIVE_INFINITY
+  let minimumHeartRate = Number.POSITIVE_INFINITY
+  for (const point of profile) {
+    if (!isPointInRange(point, axis, selectedRange) || !Number.isFinite(point.heartRate)) {
+      continue
+    }
+
+    heartRateCount += 1
+    heartRateTotal += point.heartRate
+    maximumHeartRate = Math.max(maximumHeartRate, point.heartRate)
+    minimumHeartRate = Math.min(minimumHeartRate, point.heartRate)
+  }
+
   return [
-    { label: t('chartAverageHeartRate'), value: heartRates.length ? `${Math.round(average(heartRates))} bpm` : '--' },
-    { label: t('chartMaximumHeartRate'), value: heartRates.length ? `${Math.round(Math.max(...heartRates))} bpm` : '--' },
-    { label: t('chartMinimumHeartRate'), value: heartRates.length ? `${Math.round(Math.min(...heartRates))} bpm` : '--' },
+    { label: t('chartAverageHeartRate'), value: heartRateCount ? `${Math.round(heartRateTotal / heartRateCount)} bpm` : '--' },
+    { label: t('chartMaximumHeartRate'), value: heartRateCount ? `${Math.round(maximumHeartRate)} bpm` : '--' },
+    { label: t('chartMinimumHeartRate'), value: heartRateCount ? `${Math.round(minimumHeartRate)} bpm` : '--' },
   ]
 }
 
-function getElapsedTime(points) {
-  const times = points.map((point) => point.time).filter(Number.isFinite)
-  return times.length > 1 ? Math.max(...times) - Math.min(...times) : null
-}
-
-function getMovingTime(points) {
-  let seconds = 0
-  for (let index = 1; index < points.length; index += 1) {
-    const previous = points[index - 1]
-    const current = points[index]
-    const elapsed = current.time - previous.time
-    if (Number.isFinite(elapsed) && elapsed > 0 && elapsed < 300 && current.speed > 1) {
-      seconds += elapsed
-    }
-  }
-  return seconds
-}
-
-function average(values) {
-  return values.reduce((sum, value) => sum + value, 0) / values.length
+function isPointInRange(point, axis, selectedRange) {
+  return !selectedRange || (
+    Number.isFinite(point[axis]) &&
+    point[axis] >= selectedRange.start &&
+    point[axis] <= selectedRange.end
+  )
 }
 
 function formatMeters(value) {
@@ -536,13 +552,45 @@ function formatDuration(seconds) {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
 }
 
-function downsample(points, maxPoints) {
-  if (points.length <= maxPoints) {
-    return points
+function downsampleMatching(points, maxPoints, matches) {
+  let matchCount = 0
+  for (const point of points) {
+    if (matches(point)) {
+      matchCount += 1
+    }
   }
 
-  const step = (points.length - 1) / (maxPoints - 1)
-  return Array.from({ length: maxPoints }, (_, index) => points[Math.round(index * step)])
+  if (!matchCount) {
+    return []
+  }
+
+  const outputCount = Math.min(matchCount, maxPoints)
+  const step = outputCount > 1 ? (matchCount - 1) / (outputCount - 1) : 0
+  const sampled = []
+  let matchIndex = 0
+  let outputIndex = 0
+  let targetIndex = 0
+
+  for (const point of points) {
+    if (!matches(point)) {
+      continue
+    }
+    if (matchIndex === targetIndex) {
+      sampled.push(point)
+      outputIndex += 1
+      targetIndex = Math.round(outputIndex * step)
+    }
+    matchIndex += 1
+    if (outputIndex >= outputCount) {
+      break
+    }
+  }
+
+  return sampled
+}
+
+function getChartSampleLimit(width) {
+  return Math.min(MAXIMUM_RENDERED_PROFILE_POINTS, Math.max(360, Math.round(width * 1.5)))
 }
 
 function scale(value, sourceMin, sourceMax, targetMin, targetMax) {

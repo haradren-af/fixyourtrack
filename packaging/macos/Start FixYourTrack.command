@@ -6,6 +6,15 @@ RUNTIME="$ROOT/runtime"
 PID_FILE="$RUNTIME/server.pid"
 URL_FILE="$RUNTIME/server.url"
 LOG_FILE="$RUNTIME/server.log"
+VERSION_FILE="$ROOT/VERSION.txt"
+
+expected_health() {
+  [ -f "$VERSION_FILE" ] || return 1
+  VERSION="$(sed -n 's/^Version: //p' "$VERSION_FILE" | head -n 1)"
+  REVISION="$(sed -n 's/^Revision: //p' "$VERSION_FILE" | head -n 1)"
+  [ -n "$VERSION" ] && [ -n "$REVISION" ] || return 1
+  printf 'FixYourTrack/%s/%s' "$VERSION" "$REVISION"
+}
 
 running_url() {
   if [ ! -f "$URL_FILE" ]; then
@@ -14,7 +23,8 @@ running_url() {
 
   URL="$(tr -d '\r\n' < "$URL_FILE")"
   [ -n "$URL" ] || return 1
-  [ "$(curl --silent --fail --max-time 2 "${URL}__health" 2>/dev/null || true)" = "FixYourTrack" ]
+  EXPECTED="$(expected_health)" || return 1
+  [ "$(curl --silent --fail --max-time 2 "${URL}__health" 2>/dev/null || true)" = "$EXPECTED" ]
 }
 
 if running_url; then

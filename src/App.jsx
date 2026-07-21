@@ -1,6 +1,15 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
-import { deleteRepairDraft, loadRepairDraft, saveRepairDraft } from './draftStore'
+import { getCreateRouteCopy } from './createRouteCopy'
+import {
+  createLatestRepairDraftSaveQueue,
+  deleteRepairDraft,
+  isReplaceableRepairDraftStatus,
+  loadRepairDraft,
+  saveRepairDraft,
+  shouldProtectRepairDraft,
+} from './draftStore'
+import { sanitizeFilename } from './filename'
 import { parseGpxDocument } from './gpx'
 import { translate } from './i18n'
 import {
@@ -12,11 +21,10 @@ import {
   setLegMode,
   splitLeg,
 } from './routeLegs'
-import { shouldUseDirectGeometryFallback } from './routeQuality'
-import { getRoutingRequests, parseRoutingResponse } from './routing'
+import { buildRouteDisplayPreview, buildRoutePreview, readBoundedJson } from './routeBuilder'
+import { readLocalPreference, writeLocalPreference } from './storage'
 import { getSuspiciousSegments } from './trackDetection'
 import {
-  anchorRouteGeometry,
   buildExportTrack,
   buildGpx,
   finalizeTrack,
@@ -24,12 +32,15 @@ import {
   haversineDistance,
   isValidCoordinate,
 } from './trackCore'
+import { buildWaypointElevationReference } from './waypointElevation'
 import packageMetadata from '../package.json'
 
 const TrackCharts = lazy(() => import('./TrackCharts'))
 const TrackMap = lazy(() => import('./TrackMap'))
+const CreateRouteWorkspace = lazy(() => import('./CreateRouteWorkspace'))
 const initialView = [55.751244, 37.618423]
 const minimumSidebarWidth = 380
+const maximumTrackFileBytes = 50 * 1024 * 1024
 const instructionContent = {
   ru: {
     button: 'Инструкция',
@@ -172,7 +183,11 @@ const instructionContent = {
 function App() {
   const [language, setLanguage] = useState(getStoredLanguage)
   const [theme, setTheme] = useState(getStoredTheme)
+  const [workspaceMode, setWorkspaceMode] = useState(getStoredWorkspaceMode)
+  const [shouldMountCreateWorkspace, setShouldMountCreateWorkspace] = useState(workspaceMode === 'create')
   const [isInstructionOpen, setIsInstructionOpen] = useState(false)
+  const [isProjectLibraryOpen, setIsProjectLibraryOpen] = useState(false)
+  const [createHydrationStatus, setCreateHydrationStatus] = useState('loading')
   const [track, setTrack] = useState(null)
   const [sourceTrack, setSourceTrack] = useState(null)
   const [selectedCutPointIndex, setSelectedCutPointIndex] = useState(null)
@@ -197,21 +212,71 @@ function App() {
   })
   const [message, setMessage] = useState(() => translate(getStoredLanguage(), 'ready'))
   const [error, setError] = useState('')
+  const [isLoadingTrack, setIsLoadingTrack] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [correctElevationOnExport, setCorrectElevationOnExport] = useState(getStoredElevationPreference)
   const [fitRequest, setFitRequest] = useState(0)
   const [repairHistory, setRepairHistory] = useState([])
   const [availableDraft, setAvailableDraft] = useState(null)
+  const [draftLoadStatus, setDraftLoadStatus] = useState('loading')
+  const [isDraftWriteProtected, setIsDraftWriteProtected] = useState(true)
   const [draftSavedAt, setDraftSavedAt] = useState(null)
+  const [draftSaveError, setDraftSaveError] = useState('')
+  const [hasOutstandingRepairSave, setHasOutstandingRepairSave] = useState(false)
+  const languageRef = useRef(language)
+  languageRef.current = language
+  const repairDraftSaveQueueRef = useRef(null)
+  if (!repairDraftSaveQueueRef.current) {
+    repairDraftSaveQueueRef.current = createLatestRepairDraftSaveQueue({
+      save: ({ repairSession, source, working }) => saveRepairDraft(source, working, repairSession),
+      onSaved: (savedAt) => {
+        setDraftSavedAt(savedAt)
+        setDraftSaveError('')
+      },
+      onFailed: () => {
+        setDraftSavedAt(null)
+        setDraftSaveError(translate(languageRef.current, 'draftSaveFailed'))
+      },
+    })
+  }
   const pendingRouteFitRef = useRef(false)
+  const elevationAbortRef = useRef(null)
+  const routeLegCacheRef = useRef(new Map())
   const manualTraceAnchorIdRef = useRef(null)
   const workspaceRef = useRef(null)
   const sidebarResizeCleanupRef = useRef(null)
+  const instructionDialogRef = useRef(null)
+  const instructionTriggerRef = useRef(null)
+  const projectLibraryTriggerRef = useRef(null)
   const [collapsedPanels, setCollapsedPanels] = useState(getStoredCollapsedPanels)
   const [sidebarWidth, setSidebarWidth] = useState(minimumSidebarWidth)
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   const [chartHighlightedPoints, setChartHighlightedPoints] = useState([])
-  const t = (key, values) => translate(language, key, values)
+  const t = useCallback((key, values) => translate(language, key, values), [language])
+
+  function changeWorkspaceMode(nextMode) {
+    const normalized = nextMode === 'create' ? 'create' : 'repair'
+    if (normalized === 'create') {
+      setShouldMountCreateWorkspace(true)
+    }
+    if (normalized !== 'create') {
+      setIsProjectLibraryOpen(false)
+    }
+    setWorkspaceMode(normalized)
+    writeLocalPreference('fixyourtrack-workspace-mode', normalized)
+  }
+
+  function closeProjectLibrary() {
+    setIsProjectLibraryOpen(false)
+    window.requestAnimationFrame(() => projectLibraryTriggerRef.current?.focus())
+  }
+
+  const handleCreateHydrationStatusChange = useCallback((status) => {
+    setCreateHydrationStatus(status)
+    if (status !== 'ready') {
+      setIsProjectLibraryOpen(false)
+    }
+  }, [])
 
   const suspiciousSegments = useMemo(() => {
     if (!track) {
@@ -301,6 +366,14 @@ function App() {
     return getTrackDistanceToSample(track?.points ?? [], anchorPoint.sampleIndex)
   }, [anchorPoint, rebuildDirection, track?.points])
 
+  const waypointElevationReference = useMemo(
+    () => buildWaypointElevationReference(track?.points ?? []),
+    [track?.points],
+  )
+  const waypointElevations = useMemo(() => viaPoints.map((point) => (
+    findNearestRecordedElevation(point, waypointElevationReference)
+  )), [viaPoints, waypointElevationReference])
+
   const waypointDetails = useMemo(() => {
     let cumulativeDistance = routeStartDistanceMeters
     return viaPoints.map((point, index) => {
@@ -316,7 +389,7 @@ function App() {
       return {
         ...point,
         distanceMeters: cumulativeDistance,
-        elevation: findNearestRecordedElevation(point, track?.points ?? []),
+        elevation: waypointElevations[index],
         incomingLegId,
         isIncomingOffGrid,
         isOffGrid: isIncomingOffGrid || isOutgoingOffGrid,
@@ -325,7 +398,7 @@ function App() {
         number: index + 2,
       }
     })
-  }, [effectiveRoutePreview.segments, legModes, rebuildDirection, routeStartDistanceMeters, track?.points, viaPoints])
+  }, [effectiveRoutePreview.segments, legModes, rebuildDirection, routeStartDistanceMeters, viaPoints, waypointElevations])
 
   const waypointCardLabels = useMemo(() => ({
     close: translate(language, 'closeWaypointCard'),
@@ -405,23 +478,6 @@ function App() {
     () => countAcceptedRepairGroups(track?.samples ?? []),
     [track],
   )
-  const visualizationTrack = useMemo(() => {
-    if (
-      !track ||
-      effectiveRoutePreview.status !== 'ready' ||
-      effectiveRoutePreview.geometry.length < 2
-    ) {
-      return track
-    }
-
-    return buildExportTrack(
-      track,
-      removedSegmentSamples,
-      effectiveRoutePreview.geometry,
-      rebuildDirection,
-      middleRepairRange,
-    )
-  }, [effectiveRoutePreview, middleRepairRange, rebuildDirection, removedSegmentSamples, track])
   const activeRepairDraft = useMemo(() => (
     rebuildDirection
       ? {
@@ -453,11 +509,12 @@ function App() {
   ])
 
   useEffect(() => {
-    window.localStorage.setItem('fixyourtrack-language', language)
+    writeLocalPreference('fixyourtrack-language', language)
+    document.documentElement.lang = language
   }, [language])
 
   useEffect(() => {
-    window.localStorage.setItem('fixyourtrack-theme', theme)
+    writeLocalPreference('fixyourtrack-theme', theme)
     document.documentElement.dataset.theme = theme
   }, [theme])
 
@@ -466,18 +523,59 @@ function App() {
       return undefined
     }
 
+    const dialog = instructionDialogRef.current
+    const instructionTrigger = instructionTriggerRef.current
+    const previouslyFocused = document.activeElement
+    const previousBodyOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    dialog?.focus()
+
     function handleInstructionKeyDown(event) {
       if (event.key === 'Escape') {
         setIsInstructionOpen(false)
+        return
+      }
+
+      if (event.key !== 'Tab' || !dialog) {
+        return
+      }
+
+      const focusable = Array.from(dialog.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )).filter((element) => !element.hasAttribute('hidden'))
+      if (!focusable.length) {
+        event.preventDefault()
+        dialog.focus()
+        return
+      }
+
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) {
+        event.preventDefault()
+        last.focus()
+      }
+      else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
       }
     }
 
     window.addEventListener('keydown', handleInstructionKeyDown)
-    return () => window.removeEventListener('keydown', handleInstructionKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleInstructionKeyDown)
+      document.body.style.overflow = previousBodyOverflow
+      if (previouslyFocused instanceof HTMLElement && previouslyFocused.isConnected) {
+        previouslyFocused.focus()
+      }
+      else {
+        instructionTrigger?.focus()
+      }
+    }
   }, [isInstructionOpen])
 
   useEffect(() => {
-    window.localStorage.setItem('fixyourtrack-route-profile', routeProfile)
+    writeLocalPreference('fixyourtrack-route-profile', routeProfile)
   }, [routeProfile])
 
   useEffect(() => {
@@ -487,29 +585,52 @@ function App() {
   }, [mapMode])
 
   useEffect(() => {
-    window.localStorage.setItem('fixyourtrack-map-layer', mapLayer)
+    writeLocalPreference('fixyourtrack-map-layer', mapLayer)
   }, [mapLayer])
 
   useEffect(() => {
-    window.localStorage.setItem('fixyourtrack-correct-elevation', String(correctElevationOnExport))
+    writeLocalPreference('fixyourtrack-correct-elevation', String(correctElevationOnExport))
   }, [correctElevationOnExport])
 
   useEffect(() => {
-    window.localStorage.setItem('fixyourtrack-collapsed-panels', JSON.stringify(collapsedPanels))
+    writeLocalPreference('fixyourtrack-collapsed-panels', JSON.stringify(collapsedPanels))
   }, [collapsedPanels])
 
   useEffect(() => () => sidebarResizeCleanupRef.current?.(), [])
+
+  useEffect(() => repairDraftSaveQueueRef.current.subscribeActivity(setHasOutstandingRepairSave), [])
+
+  useEffect(() => {
+    if (!hasOutstandingRepairSave) {
+      return undefined
+    }
+    const warnBeforeUnload = (event) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warnBeforeUnload)
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload)
+  }, [hasOutstandingRepairSave])
 
   useEffect(() => {
     let active = true
 
     loadRepairDraft()
-      .then((draft) => {
-        if (active && draft) {
-          setAvailableDraft(draft)
+      .then((result) => {
+        if (!active) {
+          return
+        }
+        setDraftLoadStatus(result.status)
+        setIsDraftWriteProtected(shouldProtectRepairDraft(result.status))
+        setAvailableDraft(result.status === 'ready' ? result.draft : null)
+      })
+      .catch(() => {
+        if (active) {
+          setDraftLoadStatus('unavailable')
+          setIsDraftWriteProtected(true)
+          setAvailableDraft(null)
         }
       })
-      .catch(() => {})
 
     return () => {
       active = false
@@ -517,18 +638,17 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!sourceTrack || !track) {
+    if (!sourceTrack || !track || isDraftWriteProtected) {
       return undefined
     }
 
-    const timeout = window.setTimeout(() => {
-      saveRepairDraft(sourceTrack, track, activeRepairDraft)
-        .then((savedAt) => setDraftSavedAt(savedAt))
-        .catch(() => {})
-    }, 700)
-
-    return () => window.clearTimeout(timeout)
-  }, [activeRepairDraft, sourceTrack, track])
+    repairDraftSaveQueueRef.current.enqueue({
+      repairSession: activeRepairDraft,
+      source: sourceTrack,
+      working: track,
+    })
+    return undefined
+  }, [activeRepairDraft, isDraftWriteProtected, sourceTrack, track])
 
   useEffect(() => {
     if (!controlPoints.length) {
@@ -537,44 +657,20 @@ function App() {
 
     let cancelled = false
     const abortController = new AbortController()
+    setRoutePreview(buildRouteDisplayPreview(controlPoints, legModes, routeProfile, {
+      cache: routeLegCacheRef.current,
+      status: 'loading',
+    }))
 
-    async function buildRoutePreview() {
-      setRoutePreview((current) => ({
-        ...current,
-        status: 'loading',
-        error: '',
-      }))
-
+    async function refreshRoutePreview() {
       try {
-        const segments = []
-        let geometry = []
-        let distanceMeters = 0
-
-        for (let index = 0; index < controlPoints.length - 1; index += 1) {
-          const from = controlPoints[index]
-          const to = controlPoints[index + 1]
-          const forceDirect = getLegMode(legModes, from.id) === directLegMode
-          const segment = forceDirect
-            ? buildDirectSegment(from, to)
-            : await fetchRouteSegment(from, to, routeProfile, abortController.signal)
-
-          segments.push({
-            ...segment,
-            id: `${from.id}-${to.id}`,
-            insertAfterId: from.id,
-          })
-          geometry = appendSegmentGeometry(geometry, segment.geometry)
-          distanceMeters += segment.distanceMeters
-        }
+        const nextPreview = await buildRoutePreview(controlPoints, legModes, routeProfile, {
+          cache: routeLegCacheRef.current,
+          signal: abortController.signal,
+        })
 
         if (!cancelled) {
-          setRoutePreview({
-            status: 'ready',
-            error: '',
-            segments,
-            geometry,
-            distanceMeters,
-          })
+          setRoutePreview(nextPreview)
           if (pendingRouteFitRef.current) {
             pendingRouteFitRef.current = false
             setFitRequest((current) => current + 1)
@@ -586,34 +682,61 @@ function App() {
           return
         }
 
-        setRoutePreview({
+        setRoutePreview(buildRouteDisplayPreview(controlPoints, legModes, routeProfile, {
+          cache: routeLegCacheRef.current,
           status: 'error',
           error: nextError instanceof Error ? nextError.message : 'Could not build route preview.',
-          segments: [],
-          geometry: [],
-          distanceMeters: 0,
-        })
+          failedLegId: nextError?.fromControlId ?? null,
+          failedToControlId: nextError?.toControlId ?? null,
+        }))
       }
     }
 
-    buildRoutePreview()
+    const buildTimer = window.setTimeout(refreshRoutePreview, 50)
 
     return () => {
       cancelled = true
+      window.clearTimeout(buildTimer)
       abortController.abort()
     }
   }, [controlPoints, endpoint, legModes, routeProfile])
+
+  async function establishRepairDraftSaveBarrier() {
+    repairDraftSaveQueueRef.current.invalidate()
+    await repairDraftSaveQueueRef.current.whenIdle()
+  }
 
   async function handleFileChange(event) {
     const file = event.target.files?.[0]
     if (!file) {
       return
     }
+    const hadTrack = Boolean(track)
+    const replacesPersistedDraft = isReplaceableRepairDraftStatus(draftLoadStatus)
 
     try {
+      if (file.size > maximumTrackFileBytes) {
+        throw new Error(t('fileTooLarge', { size: '50 MB' }))
+      }
+      const confirmationKey = replacesPersistedDraft
+        ? 'replaceStoredDraftConfirm'
+        : 'replaceTrackConfirm'
+      if ((track || replacesPersistedDraft) && !window.confirm(t(confirmationKey))) {
+        return
+      }
+
+      setIsLoadingTrack(true)
       setError('')
       setMessage(t('readingFile', { file: file.name }))
       const loadedTrack = await loadTrack(file)
+      const isExplicitReplacement = hadTrack || replacesPersistedDraft
+      if (isExplicitReplacement) {
+        await establishRepairDraftSaveBarrier()
+      }
+      const shouldPersistReplacement = replacesPersistedDraft || (hadTrack && !isDraftWriteProtected)
+      const replacementSavedAt = shouldPersistReplacement
+        ? await saveRepairDraft(loadedTrack, loadedTrack, null)
+        : null
       setSourceTrack(loadedTrack)
       setTrack(loadedTrack)
       setSelectedCutPointIndex(null)
@@ -629,29 +752,38 @@ function App() {
       setMapMode('inspect')
       setRepairHistory([])
       setAvailableDraft(null)
-      setDraftSavedAt(null)
+      if (replacesPersistedDraft) {
+        setDraftLoadStatus('resolved')
+        setIsDraftWriteProtected(false)
+      }
+      setDraftSavedAt(replacementSavedAt)
+      setDraftSaveError('')
       setFitRequest((current) => current + 1)
       setMessage(t('loadedFile', { file: file.name }))
     }
     catch (nextError) {
-      setSourceTrack(null)
-      setTrack(null)
-      setSelectedCutPointIndex(null)
-      setManualMiddleStartIndex(null)
-      setTailAnchorPointIndex(null)
-      setRemovedSegmentSamples([])
-      setRebuildDirection(null)
-      setMiddleRepairRange(null)
-      setEndpoint(null)
-      setViaPoints([])
-      setLegModes({})
-      setActiveWaypointId(null)
-      setMapMode('inspect')
+      if (!hadTrack) {
+        setSourceTrack(null)
+        setTrack(null)
+        setSelectedCutPointIndex(null)
+        setManualMiddleStartIndex(null)
+        setTailAnchorPointIndex(null)
+        setRemovedSegmentSamples([])
+        setRebuildDirection(null)
+        setMiddleRepairRange(null)
+        setEndpoint(null)
+        setViaPoints([])
+        setLegModes({})
+        setActiveWaypointId(null)
+        setMapMode('inspect')
+        setRepairHistory([])
+        setDraftSaveError('')
+      }
       setError(nextError instanceof Error ? nextError.message : 'Could not read the track file.')
-      setRepairHistory([])
       setMessage(t('loadFailed'))
     }
     finally {
+      setIsLoadingTrack(false)
       event.target.value = ''
     }
   }
@@ -825,7 +957,7 @@ function App() {
     ))
   }
 
-  function resumeDraft() {
+  async function resumeDraft() {
     if (!availableDraft) {
       return
     }
@@ -838,6 +970,7 @@ function App() {
         : restoredWorkingDraft
       const repairSession = availableDraft.repairSession
       const hasRepairSession = ['before', 'after', 'middle'].includes(repairSession?.rebuildDirection)
+      await establishRepairDraftSaveBarrier()
 
       setSourceTrack(restoredSource)
       setTrack(restoredWorking)
@@ -863,7 +996,10 @@ function App() {
           })
       setRepairHistory([])
       setDraftSavedAt(availableDraft.savedAt)
+      setDraftSaveError('')
       setAvailableDraft(null)
+      setDraftLoadStatus('resolved')
+      setIsDraftWriteProtected(false)
       setFitRequest((current) => current + 1)
       setError('')
       setMessage(t('draftRestored'))
@@ -875,8 +1011,11 @@ function App() {
 
   async function discardDraft() {
     try {
+      await establishRepairDraftSaveBarrier()
       await deleteRepairDraft()
       setAvailableDraft(null)
+      setDraftLoadStatus('empty')
+      setIsDraftWriteProtected(false)
       setDraftSavedAt(null)
       setMessage(t('draftDiscarded'))
     }
@@ -1345,6 +1484,8 @@ function App() {
       return
     }
 
+    const exportController = new AbortController()
+    elevationAbortRef.current = exportController
     try {
       setIsExporting(true)
       setError('')
@@ -1359,7 +1500,13 @@ function App() {
 
       if (correctElevationOnExport) {
         setMessage(t('correctingElevation'))
-        exportableTrack = await correctTrackElevation(exportableTrack)
+        exportableTrack = await correctTrackElevation(exportableTrack, {
+          signal: exportController.signal,
+        })
+      }
+
+      if (exportController.signal.aborted) {
+        throw new DOMException('Export cancelled.', 'AbortError')
       }
 
       const gpxContent = buildGpx(exportableTrack)
@@ -1368,17 +1515,33 @@ function App() {
       const link = document.createElement('a')
       link.href = url
       link.download = `${sanitizeFilename(exportableTrack.name || 'fixed-track')}.gpx`
+      document.body.append(link)
       link.click()
-      URL.revokeObjectURL(url)
+      link.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 0)
       setMessage(t('exported'))
     }
     catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : 'Export failed.')
-      setMessage(t('exportFailed'))
+      const cancelled = nextError?.name === 'AbortError'
+      if (cancelled) {
+        setError('')
+        setMessage(t('exportCancelled'))
+      }
+      else {
+        setError(nextError instanceof Error ? nextError.message : 'Export failed.')
+        setMessage(t('exportFailed'))
+      }
     }
     finally {
+      if (elevationAbortRef.current === exportController) {
+        elevationAbortRef.current = null
+      }
       setIsExporting(false)
     }
+  }
+
+  function cancelTrackExport() {
+    elevationAbortRef.current?.abort()
   }
 
   function applyTailRepair() {
@@ -1475,41 +1638,135 @@ function App() {
   const middleEndPointIndex = middleRepairRange && track
     ? track.points.findIndex((point) => point.sampleIndex === middleRepairRange.endSampleIndex)
     : -1
-  const instruction = instructionContent[language] ?? instructionContent.en
+  const createCopy = getCreateRouteCopy(language)
+  const instruction = workspaceMode === 'create'
+    ? {
+        button: createCopy.instructionsButton,
+        title: createCopy.instructionsTitle,
+        intro: createCopy.instructionsIntro,
+        scenarios: createCopy.instructions,
+      }
+    : instructionContent[language] ?? instructionContent.en
+  const draftLoadErrorKey = {
+    corrupt: 'draftLoadCorrupt',
+    unavailable: 'draftLoadUnavailable',
+    unsupported: 'draftLoadUnsupported',
+  }[draftLoadStatus]
+  const draftLoadError = draftLoadErrorKey ? t(draftLoadErrorKey) : ''
+  const repairHeaderErrors = [...new Set([draftLoadError, draftSaveError, error].filter(Boolean))]
+  const headerError = workspaceMode === 'create'
+    ? createHydrationStatus === 'blocked' ? createCopy.draftLoadFailed : ''
+    : repairHeaderErrors.join(' · ')
+  const headerMessage = workspaceMode === 'create'
+    ? createHydrationStatus === 'loading' ? createCopy.draftLoading : createCopy.lead
+    : message
+  const hasAvailableRepairDraft = workspaceMode === 'repair' && !track && Boolean(availableDraft)
+  const availableDraftDate = hasAvailableRepairDraft
+    ? formatDraftDate(availableDraft.savedAt, language)
+    : ''
+  const headerIsBusy = workspaceMode === 'create'
+    ? createHydrationStatus === 'loading'
+    : draftLoadStatus === 'loading' || isLoadingTrack || isExporting || routePreview.status === 'loading'
+  const heroFeedbackTone = headerError
+    ? 'error'
+    : hasAvailableRepairDraft
+      ? 'draft'
+      : headerIsBusy
+        ? 'busy'
+        : track || workspaceMode === 'create'
+          ? 'ready'
+          : 'idle'
 
   return (
     <div className={`app-shell theme-${theme}`}>
-      <section className="hero">
+      <section
+        className="hero"
+        aria-hidden={isInstructionOpen || isProjectLibraryOpen ? 'true' : undefined}
+        inert={isInstructionOpen || isProjectLibraryOpen ? true : undefined}
+      >
         <div className="hero-copy">
-          <p className="eyebrow">{t('appEyebrow')}</p>
-          <h1>{t('appTitle')}</h1>
-          <p className="lead">{t('appLead')}</p>
+          <p className="eyebrow">{workspaceMode === 'create' ? createCopy.eyebrow : t('appEyebrow')}</p>
+          <h1>{workspaceMode === 'create' ? createCopy.title : t('appTitle')}</h1>
         </div>
 
         <div className="hero-actions">
           <div className="hero-actions-row">
-            <button
-              type="button"
-              className="ghost-button instruction-button"
-              onClick={() => setIsInstructionOpen(true)}
-            >
-              {instruction.button}
-            </button>
+            <div className="hero-mode-actions">
+              <fieldset className="workspace-mode-switch">
+                <legend>{createCopy.workspaceMode}</legend>
+                <label>
+                  <input
+                    type="radio"
+                    name="workspace-mode"
+                    value="repair"
+                    checked={workspaceMode === 'repair'}
+                    onChange={() => changeWorkspaceMode('repair')}
+                  />
+                  <span>{createCopy.repairMode}</span>
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="workspace-mode"
+                    value="create"
+                    checked={workspaceMode === 'create'}
+                    onChange={() => changeWorkspaceMode('create')}
+                  />
+                  <span>{createCopy.createMode}</span>
+                </label>
+              </fieldset>
 
-            <label className="file-picker">
-              <input type="file" accept=".gpx,.fit" onChange={handleFileChange} />
-              <span>{t('loadTrack')}</span>
-            </label>
+              <button
+                type="button"
+                className="ghost-button instruction-button"
+                ref={instructionTriggerRef}
+                onClick={() => setIsInstructionOpen(true)}
+              >
+                {instruction.button}
+              </button>
+            </div>
 
-            <button
-              type="button"
-              className="ghost-button"
-              onClick={exportTrack}
-              disabled={!track || isExporting || exportBlockedByRepair}
-              title={exportBlockedByRepair ? t('finishRepairBeforeExport') : undefined}
-            >
-              {t('exportGpx')}
-            </button>
+            <div className="hero-context-actions">
+              {workspaceMode === 'create' ? (
+                <button
+                  type="button"
+                  className="ghost-button"
+                  disabled={createHydrationStatus !== 'ready'}
+                  ref={projectLibraryTriggerRef}
+                  onClick={() => setIsProjectLibraryOpen(true)}
+                >
+                  {createCopy.projects}
+                </button>
+              ) : (
+                <>
+                  <label className="file-picker" title={t('loadTrack')}>
+                    <input
+                      type="file"
+                      accept=".gpx,.fit"
+                      aria-label={t('loadTrack')}
+                      disabled={draftLoadStatus === 'loading' || isLoadingTrack || isExporting}
+                      onChange={handleFileChange}
+                    />
+                    <span>{t('loadTrackCompact')}</span>
+                  </label>
+
+                  <button
+                    type="button"
+                    className="ghost-button hero-export-action"
+                    onClick={isExporting ? cancelTrackExport : exportTrack}
+                    disabled={!isExporting && (isLoadingTrack || !track || exportBlockedByRepair)}
+                    aria-label={isExporting ? t('cancelExport') : t('exportGpx')}
+                    title={isExporting
+                      ? t('cancelExport')
+                      : exportBlockedByRepair
+                        ? t('finishRepairBeforeExport')
+                        : t('exportGpx')}
+                  >
+                    {isExporting ? t('cancelExportCompact') : t('exportGpxCompact')}
+                  </button>
+                </>
+              )}
+            </div>
 
             <label className="language-picker">
               <span>{t('language')}</span>
@@ -1518,51 +1775,102 @@ function App() {
                 <option value="ru">RU</option>
               </select>
             </label>
-
           </div>
 
-          <p className="status-text status-text-compact">{message}</p>
-          {error ? <p className="error-text">{error}</p> : null}
-          {track && draftSavedAt ? (
-            <div className="draft-saved">{t('draftSaved')}</div>
-          ) : null}
-          {!track && availableDraft ? (
-            <div className="draft-card">
-              <strong>{t('draftAvailable', {
-                date: formatDraftDate(availableDraft.savedAt, language),
-              })}</strong>
-              <div className="draft-actions">
-                <button type="button" className="primary-button" onClick={resumeDraft}>
-                  {t('resumeDraft')}
-                </button>
-                <button type="button" className="ghost-button" onClick={discardDraft}>
-                  {t('discardDraft')}
-                </button>
+          <div
+            className={`hero-feedback hero-feedback-${heroFeedbackTone}${hasAvailableRepairDraft && !headerError ? ' hero-feedback-recovery' : ''}`}
+            aria-busy={headerIsBusy || undefined}
+          >
+            {headerError || !hasAvailableRepairDraft ? (
+              <div className="hero-notice">
+                <span className="hero-status-dot" aria-hidden="true" />
+                {headerError ? (
+                  <p className="error-text hero-error-text" role="alert" title={headerError}>{headerError}</p>
+                ) : (
+                  <p
+                    className="status-text status-text-compact"
+                    role="status"
+                    aria-live="polite"
+                    aria-atomic="true"
+                    title={headerMessage || undefined}
+                  >
+                    {headerMessage}
+                  </p>
+                )}
               </div>
-            </div>
-          ) : null}
+            ) : null}
+
+            {hasAvailableRepairDraft ? (
+              <div
+                className="draft-card"
+                role="region"
+                aria-label={t('draftAvailable', { date: availableDraftDate })}
+                title={t('draftAvailable', { date: availableDraftDate })}
+              >
+                <div className="draft-copy">
+                  <strong>{t('localDraft')}</strong>
+                  <span aria-hidden="true">·</span>
+                  <time dateTime={availableDraft.savedAt}>{availableDraftDate}</time>
+                </div>
+                <div className="draft-actions">
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={resumeDraft}
+                    aria-label={t('resumeDraft')}
+                    title={t('resumeDraft')}
+                  >
+                    {t('resumeDraftCompact')}
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={discardDraft}
+                    aria-label={t('discardDraft')}
+                    title={t('discardDraft')}
+                  >
+                    {t('discardDraftCompact')}
+                  </button>
+                </div>
+              </div>
+            ) : workspaceMode === 'repair' && !headerError && track && draftSavedAt ? (
+              <div className="draft-saved" aria-label={t('draftSaved')} title={t('draftSaved')}>
+                <span aria-hidden="true">✓</span>
+                <span>{t('savedLocally')}</span>
+              </div>
+            ) : null}
+          </div>
         </div>
       </section>
 
       {isInstructionOpen ? (
-        <div className="instruction-backdrop" onClick={() => setIsInstructionOpen(false)}>
+        <div
+          className="instruction-backdrop"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setIsInstructionOpen(false)
+            }
+          }}
+        >
           <article
             className="instruction-sheet"
             role="dialog"
             aria-modal="true"
             aria-labelledby="instruction-sheet-title"
-            onClick={(event) => event.stopPropagation()}
+            aria-describedby="instruction-sheet-intro"
+            ref={instructionDialogRef}
+            tabIndex="-1"
           >
             <div className="instruction-sheet-header">
               <div>
                 <p className="eyebrow">FixYourTrack</p>
                 <h2 id="instruction-sheet-title">{instruction.title}</h2>
-                <p>{instruction.intro}</p>
+                <p id="instruction-sheet-intro">{instruction.intro}</p>
               </div>
               <button
                 type="button"
                 className="instruction-close"
-                aria-label="Close instructions"
+                aria-label={t('closeInstructions')}
                 onClick={() => setIsInstructionOpen(false)}
               >
                 ×
@@ -1585,8 +1893,26 @@ function App() {
         </div>
       ) : null}
 
+      {shouldMountCreateWorkspace ? (
+        <Suspense fallback={workspaceMode === 'create' ? <div className="component-loading">{t('loading')}</div> : null}>
+          <CreateRouteWorkspace
+            active={workspaceMode === 'create'}
+            inert={isInstructionOpen || isProjectLibraryOpen}
+            initialView={initialView}
+            language={language}
+            mapLayer={mapLayer}
+            onMapLayerChange={setMapLayer}
+            onHydrationStatusChange={handleCreateHydrationStatusChange}
+            onProjectLibraryClose={closeProjectLibrary}
+            projectLibraryOpen={isProjectLibraryOpen}
+          />
+        </Suspense>
+      ) : null}
       <section
         className={`workspace${isResizingSidebar ? ' workspace-resizing' : ''}`}
+        aria-hidden={isInstructionOpen || isProjectLibraryOpen || workspaceMode !== 'repair' ? 'true' : undefined}
+        hidden={workspaceMode !== 'repair'}
+        inert={isInstructionOpen || isProjectLibraryOpen || workspaceMode !== 'repair' ? true : undefined}
         ref={workspaceRef}
         style={{ '--sidebar-width': `${sidebarWidth}px` }}
       >
@@ -1597,7 +1923,7 @@ function App() {
                 <h2>{t('track')}</h2>
                 {track ? <span>{track.format.toUpperCase()}</span> : null}
               </div>
-              <button type="button" className="panel-toggle" onClick={() => togglePanel('track')} aria-label={t('togglePanel', { panel: t('track') })}>
+              <button type="button" className="panel-toggle" aria-expanded={!collapsedPanels.track} onClick={() => togglePanel('track')} aria-label={t('togglePanel', { panel: t('track') })}>
                 {collapsedPanels.track ? '+' : '-'}
               </button>
             </div>
@@ -1702,7 +2028,7 @@ function App() {
                   <h2>{t('visualization')}</h2>
                   <span>{t('trackProfile')}</span>
                 </div>
-                <button type="button" className="panel-toggle" onClick={() => togglePanel('visualization')} aria-label={t('togglePanel', { panel: t('visualization') })}>
+                <button type="button" className="panel-toggle" aria-expanded={!collapsedPanels.visualization} onClick={() => togglePanel('visualization')} aria-label={t('togglePanel', { panel: t('visualization') })}>
                   {collapsedPanels.visualization ? '+' : '-'}
                 </button>
               </div>
@@ -1711,7 +2037,7 @@ function App() {
                 <Suspense fallback={<div className="component-loading">{t('loading')}</div>}>
                   <TrackCharts
                     onSelectionChange={setChartHighlightedPoints}
-                    samples={visualizationTrack.samples}
+                    samples={track.samples}
                     t={t}
                   />
                 </Suspense>
@@ -1725,7 +2051,7 @@ function App() {
                 <h2>{t('suspiciousJumps')}</h2>
                 {suspiciousSegments.length ? <span>{t('jumpHints', { count: suspiciousSegments.length })}</span> : null}
               </div>
-              <button type="button" className="panel-toggle" onClick={() => togglePanel('suspicious')} aria-label={t('togglePanel', { panel: t('suspiciousJumps') })}>
+              <button type="button" className="panel-toggle" aria-expanded={!collapsedPanels.suspicious} onClick={() => togglePanel('suspicious')} aria-label={t('togglePanel', { panel: t('suspiciousJumps') })}>
                 {collapsedPanels.suspicious ? '+' : '-'}
               </button>
             </div>
@@ -1782,7 +2108,7 @@ function App() {
                 <h2>{rebuildDirection === 'middle' ? t('middleRepair') : t('routeRebuild')}</h2>
                 {anchorPoint ? <span>{t('routing')}</span> : null}
               </div>
-              <button type="button" className="panel-toggle" onClick={() => togglePanel('rebuild')} aria-label={t('togglePanel', { panel: t('routeRebuild') })}>
+              <button type="button" className="panel-toggle" aria-expanded={!collapsedPanels.rebuild} onClick={() => togglePanel('rebuild')} aria-label={t('togglePanel', { panel: t('routeRebuild') })}>
                 {collapsedPanels.rebuild ? '+' : '-'}
               </button>
             </div>
@@ -1982,7 +2308,7 @@ function App() {
                 <h2>{t('waypointEditor')}</h2>
                 {activeWaypoint ? <span>{t('selected')}</span> : null}
               </div>
-              <button type="button" className="panel-toggle" onClick={() => togglePanel('waypoints')} aria-label={t('togglePanel', { panel: t('waypointEditor') })}>
+              <button type="button" className="panel-toggle" aria-expanded={!collapsedPanels.waypoints} onClick={() => togglePanel('waypoints')} aria-label={t('togglePanel', { panel: t('waypointEditor') })}>
                 {collapsedPanels.waypoints ? '+' : '-'}
               </button>
             </div>
@@ -2024,7 +2350,7 @@ function App() {
                 <h2>{t('history')}</h2>
                 {repairHistory.length ? <span>{repairHistory.length}</span> : null}
               </div>
-              <button type="button" className="panel-toggle" onClick={() => togglePanel('history')} aria-label={t('togglePanel', { panel: t('history') })}>
+              <button type="button" className="panel-toggle" aria-expanded={!collapsedPanels.history} onClick={() => togglePanel('history')} aria-label={t('togglePanel', { panel: t('history') })}>
                 {collapsedPanels.history ? '+' : '-'}
               </button>
             </div>
@@ -2058,7 +2384,7 @@ function App() {
               <div className="panel-header-main">
                 <h2>{t('settings')}</h2>
               </div>
-              <button type="button" className="panel-toggle" onClick={() => togglePanel('settings')} aria-label={t('togglePanel', { panel: t('settings') })}>
+              <button type="button" className="panel-toggle" aria-expanded={!collapsedPanels.settings} onClick={() => togglePanel('settings')} aria-label={t('togglePanel', { panel: t('settings') })}>
                 {collapsedPanels.settings ? '+' : '-'}
               </button>
             </div>
@@ -2125,6 +2451,7 @@ function App() {
           <div className="map-layer-switch" role="group" aria-label={t('mapLayer')}>
             <button
               type="button"
+              aria-pressed={mapLayer === 'scheme'}
               className={mapLayer === 'scheme' ? 'map-layer-button-active' : ''}
               onClick={() => setMapLayer('scheme')}
             >
@@ -2132,6 +2459,7 @@ function App() {
             </button>
             <button
               type="button"
+              aria-pressed={mapLayer === 'satellite'}
               className={mapLayer === 'satellite' ? 'map-layer-button-active' : ''}
               onClick={() => setMapLayer('satellite')}
             >
@@ -2197,7 +2525,7 @@ function getStoredLanguage() {
     return 'en'
   }
 
-  const stored = window.localStorage.getItem('fixyourtrack-language')
+  const stored = readLocalPreference('fixyourtrack-language')
   if (stored === 'en' || stored === 'ru') {
     return stored
   }
@@ -2210,7 +2538,7 @@ function getStoredTheme() {
     return 'light'
   }
 
-  const stored = window.localStorage.getItem('fixyourtrack-theme')
+  const stored = readLocalPreference('fixyourtrack-theme')
   if (stored === 'light' || stored === 'dark') {
     return stored
   }
@@ -2218,12 +2546,18 @@ function getStoredTheme() {
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
+function getStoredWorkspaceMode() {
+  return typeof window !== 'undefined' && readLocalPreference('fixyourtrack-workspace-mode') === 'create'
+    ? 'create'
+    : 'repair'
+}
+
 function getStoredRouteProfile() {
   if (typeof window === 'undefined') {
     return 'cycling'
   }
 
-  const stored = window.localStorage.getItem('fixyourtrack-route-profile')
+  const stored = readLocalPreference('fixyourtrack-route-profile')
   return ['cycling', 'walking'].includes(stored) ? stored : 'cycling'
 }
 
@@ -2232,14 +2566,14 @@ function getStoredMapLayer() {
     return 'scheme'
   }
 
-  return window.localStorage.getItem('fixyourtrack-map-layer') === 'satellite'
+  return readLocalPreference('fixyourtrack-map-layer') === 'satellite'
     ? 'satellite'
     : 'scheme'
 }
 
 function getStoredElevationPreference() {
   return typeof window !== 'undefined' &&
-    window.localStorage.getItem('fixyourtrack-correct-elevation') === 'true'
+    readLocalPreference('fixyourtrack-correct-elevation') === 'true'
 }
 
 function getStoredCollapsedPanels() {
@@ -2260,7 +2594,7 @@ function getStoredCollapsedPanels() {
   try {
     return {
       ...defaults,
-      ...JSON.parse(window.localStorage.getItem('fixyourtrack-collapsed-panels') ?? '{}'),
+      ...JSON.parse(readLocalPreference('fixyourtrack-collapsed-panels') ?? '{}'),
     }
   }
   catch {
@@ -2416,90 +2750,6 @@ function getDistanceToLineSegment(point, start, end) {
   })
 }
 
-async function fetchRouteSegment(from, to, profile, signal) {
-  if (!isValidCoordinate(from) || !isValidCoordinate(to)) {
-    throw new Error('Route segment contains invalid coordinates.')
-  }
-
-  const failures = []
-  const requests = getRoutingRequests(from, to, profile)
-
-  for (const [requestIndex, request] of requests.entries()) {
-    const attempts = requestIndex === 0 ? 2 : 1
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      try {
-        const response = await fetchWithTimeout(request.url, { signal }, 12000)
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`)
-        }
-
-        const route = parseRoutingResponse(await response.json(), request.provider)
-        if (!Array.isArray(route.coordinates) || route.coordinates.length < 2) {
-          throw new Error('no route geometry')
-        }
-
-        const routeGeometry = route.coordinates.map((coordinate) => ({
-          lat: coordinate[1],
-          lon: coordinate[0],
-        }))
-        const geometry = anchorRouteGeometry(routeGeometry, from, to)
-        if (shouldUseDirectGeometryFallback(from, to, geometry)) {
-          const fallbackGeometry = [
-            { lat: from.lat, lon: from.lon },
-            { lat: to.lat, lon: to.lon },
-          ]
-          return {
-            mode: 'routed',
-            geometry: fallbackGeometry,
-            distanceMeters: getPolylineLength(fallbackGeometry),
-          }
-        }
-        return {
-          mode: 'routed',
-          geometry,
-          distanceMeters: Number.isFinite(route.distanceMeters) ? route.distanceMeters : getPolylineLength([
-            { lat: from.lat, lon: from.lon },
-            { lat: to.lat, lon: to.lon },
-          ]),
-        }
-      }
-      catch (networkError) {
-        if (signal?.aborted) {
-          throw networkError
-        }
-        failures.push(networkError instanceof Error ? networkError.message : 'network error')
-      }
-    }
-  }
-
-  throw new Error(`Routing services are unreachable: ${failures.at(-1) ?? 'no route found'}`)
-}
-
-function buildDirectSegment(from, to) {
-  if (!isValidCoordinate(from) || !isValidCoordinate(to)) {
-    throw new Error('Direct segment contains invalid coordinates.')
-  }
-
-  const geometry = [
-    { lat: from.lat, lon: from.lon },
-    { lat: to.lat, lon: to.lon },
-  ]
-
-  return {
-    mode: 'direct',
-    geometry,
-    distanceMeters: getPolylineLength(geometry),
-  }
-}
-
-function appendSegmentGeometry(currentGeometry, nextGeometry) {
-  if (!currentGeometry.length) {
-    return [...nextGeometry]
-  }
-
-  return [...currentGeometry, ...nextGeometry.slice(1)]
-}
-
 function interpolateNumber(from, to, ratio) {
   if (Number.isFinite(from) && Number.isFinite(to)) {
     return from + (to - from) * ratio
@@ -2508,9 +2758,9 @@ function interpolateNumber(from, to, ratio) {
   return Number.isFinite(from) ? from : Number.isFinite(to) ? to : null
 }
 
-async function correctTrackElevation(track) {
+async function correctTrackElevation(track, { signal } = {}) {
   const elevationProfile = buildElevationQueryProfile(track.points)
-  const queriedElevations = await fetchElevationProfile(elevationProfile.queryPoints)
+  const queriedElevations = await fetchElevationProfile(elevationProfile.queryPoints, { signal })
   const correctedElevations = interpolateElevationProfile(elevationProfile, queriedElevations)
   const nextSamples = track.samples.map((sample) => ({ ...sample }))
 
@@ -2530,25 +2780,37 @@ async function correctTrackElevation(track) {
   })
 }
 
-async function fetchElevationProfile(points) {
-  try {
-    return await fetchOpenElevationProfile(points)
+async function fetchElevationProfile(points, { signal } = {}) {
+  const operationController = new AbortController()
+  const abortFromUpstream = () => operationController.abort(signal?.reason)
+  const timeout = window.setTimeout(() => operationController.abort(), 30000)
+  if (signal?.aborted) {
+    operationController.abort(signal.reason)
   }
-  catch (primaryError) {
-    try {
-      return await fetchOpenMeteoElevationProfile(points)
+  else {
+    signal?.addEventListener('abort', abortFromUpstream, { once: true })
+  }
+  try {
+    return await fetchOpenElevationProfile(points, { signal: operationController.signal })
+  }
+  catch (error) {
+    if (signal?.aborted) {
+      throw new DOMException('Export cancelled.', 'AbortError')
     }
-    catch (fallbackError) {
-      const primaryDetail = primaryError instanceof Error ? primaryError.message : 'primary service failed'
-      const fallbackDetail = fallbackError instanceof Error ? fallbackError.message : 'fallback service failed'
-      throw new Error(`Terrain services are unavailable. ${primaryDetail}. ${fallbackDetail}.`, {
-        cause: fallbackError,
+    if (operationController.signal.aborted) {
+      throw new Error('Terrain correction exceeded its 30-second operation limit.', {
+        cause: error,
       })
     }
+    throw error
+  }
+  finally {
+    window.clearTimeout(timeout)
+    signal?.removeEventListener('abort', abortFromUpstream)
   }
 }
 
-async function fetchOpenElevationProfile(points) {
+async function fetchOpenElevationProfile(points, { signal } = {}) {
   let response
   try {
     response = await fetchWithTimeout('https://api.open-elevation.com/api/v1/lookup', {
@@ -2562,6 +2824,7 @@ async function fetchOpenElevationProfile(points) {
           longitude: roundCoordinate(point.lon),
         })),
       }),
+      signal,
     }, 25000)
   }
   catch (networkError) {
@@ -2576,56 +2839,24 @@ async function fetchOpenElevationProfile(points) {
     throw new Error(`Primary terrain service returned ${response.status}${detail ? `: ${detail}` : ''}`)
   }
 
-  const data = await response.json()
+  const contentType = response.headers?.get?.('content-type')
+  if (contentType && !contentType.toLowerCase().includes('json')) {
+    throw new Error('Primary terrain service returned an unexpected content type')
+  }
+  const data = await readBoundedJson(response, 1024 * 1024)
   if (!Array.isArray(data.results) || data.results.length !== points.length) {
     throw new Error('Primary terrain service returned incomplete elevation data')
   }
 
-  return data.results.map((result) => (
-    Number.isFinite(result.elevation) ? result.elevation : null
-  ))
+  const elevations = data.results.map((result) => normalizeTerrainElevation(result?.elevation))
+  if (elevations.some((elevation) => elevation === null)) {
+    throw new Error('Primary terrain service returned an implausible elevation value')
+  }
+  return elevations
 }
 
-async function fetchOpenMeteoElevationProfile(points) {
-  const batchSize = 100
-  const elevations = []
-
-  for (let offset = 0; offset < points.length; offset += batchSize) {
-    const batch = points.slice(offset, offset + batchSize)
-    const params = new URLSearchParams({
-      latitude: batch.map((point) => roundCoordinate(point.lat)).join(','),
-      longitude: batch.map((point) => roundCoordinate(point.lon)).join(','),
-    })
-
-    let response
-    try {
-      response = await fetchWithTimeout(`https://api.open-meteo.com/v1/elevation?${params.toString()}`, {
-        method: 'GET',
-      }, 25000)
-    }
-    catch (networkError) {
-      const detail = networkError instanceof Error ? networkError.message : 'network error'
-      throw new Error(`Fallback terrain service is unreachable: ${detail}`, {
-        cause: networkError,
-      })
-    }
-
-    if (!response.ok) {
-      const detail = await readApiError(response)
-      throw new Error(`Fallback terrain service returned ${response.status}${detail ? `: ${detail}` : ''}`)
-    }
-
-    const data = await response.json()
-    if (!Array.isArray(data.elevation) || data.elevation.length !== batch.length) {
-      throw new Error('Fallback terrain service returned incomplete elevation data')
-    }
-
-    data.elevation.forEach((elevation) => {
-      elevations.push(Number.isFinite(elevation) ? elevation : null)
-    })
-  }
-
-  return elevations
+function normalizeTerrainElevation(value) {
+  return Number.isFinite(value) && value >= -500 && value <= 9000 ? value : null
 }
 
 function buildElevationQueryProfile(points, minimumSpacingMeters = 50, maxQueryPoints = 450) {
@@ -2686,8 +2917,10 @@ function interpolateElevationProfile(profile, queriedElevations) {
 
 async function readApiError(response) {
   try {
-    const data = await response.json()
-    return typeof data.reason === 'string' ? data.reason : ''
+    const data = await readBoundedJson(response, 4096)
+    const detail = [data?.reason, data?.error, data?.message]
+      .find((value) => typeof value === 'string')
+    return detail ? detail.slice(0, 300) : ''
   }
   catch {
     return ''
@@ -2922,12 +3155,6 @@ function getTrackDistanceToSample(points, targetSampleIndex) {
 
 function roundCoordinate(value) {
   return Number.parseFloat(value.toFixed(6))
-}
-
-function sanitizeFilename(name) {
-  return Array.from(name, (char) => (
-    /[<>:"/\\|?*]/.test(char) || char.charCodeAt(0) < 32 ? '-' : char
-  )).join('')
 }
 
 export default App

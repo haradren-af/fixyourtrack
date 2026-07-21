@@ -9,8 +9,10 @@ const EMPTY_COLLECTION = {
 
 export default function TrackMap({
   activeWaypointId,
+  anchorDraggable = false,
   anchorPoint,
   anchorLabel,
+  enableWaypointDoubleClickRemove = true,
   endpoint,
   endpointLabel,
   fitRequest,
@@ -22,6 +24,7 @@ export default function TrackMap({
   manualMiddleStartLabel,
   manualMiddleStartPoint,
   mapLayer,
+  onAnchorMove,
   onEndpointMove,
   onMapClick,
   onRouteSegmentClick,
@@ -54,12 +57,18 @@ export default function TrackMap({
   const previousFitRequestRef = useRef(null)
   const interactionModeRef = useRef(interactionMode)
   const routeSegmentsRef = useRef(routeSegments)
+  const activeWaypointIdRef = useRef(activeWaypointId)
+  const suppressMapClickRef = useRef(false)
   const handlersRef = useRef({})
   const [mapReady, setMapReady] = useState(false)
 
   useEffect(() => {
     routeSegmentsRef.current = routeSegments
   }, [routeSegments])
+
+  useEffect(() => {
+    activeWaypointIdRef.current = activeWaypointId
+  }, [activeWaypointId])
 
   useEffect(() => {
     interactionModeRef.current = interactionMode
@@ -73,6 +82,7 @@ export default function TrackMap({
   useEffect(() => {
     handlersRef.current = {
       onEndpointMove,
+      onAnchorMove,
       onMapClick,
       onRouteSegmentClick,
       onTrackClick,
@@ -84,6 +94,7 @@ export default function TrackMap({
     }
   }, [
     onEndpointMove,
+    onAnchorMove,
     onMapClick,
     onRouteSegmentClick,
     onTrackClick,
@@ -115,6 +126,15 @@ export default function TrackMap({
     map.touchZoomRotate.disableRotation()
 
     function handleClick(event) {
+      if (suppressMapClickRef.current) {
+        suppressMapClickRef.current = false
+        return
+      }
+      if (activeWaypointIdRef.current) {
+        activeWaypointIdRef.current = null
+        handlersRef.current.onWaypointSelect(null)
+        return
+      }
       const latlng = { lat: event.lngLat.lat, lng: event.lngLat.lng }
       if (interactionModeRef.current !== 'inspect') {
         handlersRef.current.onMapClick(latlng)
@@ -234,11 +254,43 @@ export default function TrackMap({
     }
 
     setSourceData(map, 'source-track', hasTrackEdits ? trackToGeoJson(sourceTrack) : EMPTY_COLLECTION)
+  }, [hasTrackEdits, mapReady, sourceTrack])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!mapReady || !map) {
+      return
+    }
+
     setSourceData(map, 'track', trackToGeoJson(track))
+  }, [mapReady, track])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!mapReady || !map) {
+      return
+    }
+
     setSourceData(map, 'suspicious', suspiciousToGeoJson(suspiciousSegments, track))
+  }, [mapReady, suspiciousSegments, track])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!mapReady || !map) {
+      return
+    }
+
     setSourceData(map, 'route', routeToGeoJson(routeSegments))
+  }, [mapReady, routeSegments])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!mapReady || !map) {
+      return
+    }
+
     setSourceData(map, 'track-highlight', pointsToGeoJson(highlightedTrackPoints))
-  }, [hasTrackEdits, highlightedTrackPoints, mapReady, routeSegments, sourceTrack, suspiciousSegments, track])
+  }, [highlightedTrackPoints, mapReady])
 
   useEffect(() => {
     const map = mapRef.current
@@ -269,8 +321,12 @@ export default function TrackMap({
     if (anchorPoint) {
       markersRef.current.push(addMarker(map, anchorPoint, {
         className: 'map-pin-anchor',
+        draggable: anchorDraggable,
         label: anchorLabel,
         number: rebuildDirection === 'before' ? viaPoints.length + 2 : 1,
+        onMove: anchorDraggable
+          ? (latlng) => handlersRef.current.onAnchorMove?.(latlng)
+          : undefined,
       }))
     }
 
@@ -287,7 +343,6 @@ export default function TrackMap({
     viaPoints.forEach((point, index) => {
       const details = waypointDetails.find(({ id }) => id === point.id)
       markersRef.current.push(addMarker(map, point, {
-        active: point.id === activeWaypointId,
         className: details?.isOffGrid ? 'map-pin-offgrid' : 'map-pin-via',
         draggable: true,
         number: index + 2,
@@ -299,7 +354,9 @@ export default function TrackMap({
           waypointPopupRef.current = null
         },
         onClick: () => handlersRef.current.onWaypointSelect(point.id),
-        onDoubleClick: () => handlersRef.current.onWaypointRemove(point.id),
+        onDoubleClick: enableWaypointDoubleClickRemove
+          ? () => handlersRef.current.onWaypointRemove?.(point.id)
+          : undefined,
         onMove: (latlng) => handlersRef.current.onWaypointMove(point.id, latlng),
       }))
     })
@@ -309,11 +366,12 @@ export default function TrackMap({
       markersRef.current = []
     }
   }, [
-    activeWaypointId,
+    anchorDraggable,
     anchorLabel,
     anchorPoint,
     endpoint,
     endpointLabel,
+    enableWaypointDoubleClickRemove,
     manualMiddleStartLabel,
     manualMiddleStartPoint,
     mapReady,
@@ -327,6 +385,43 @@ export default function TrackMap({
   ])
 
   useEffect(() => {
+    for (const marker of markersRef.current) {
+      const element = marker.getElement()
+      if (element.dataset.waypointId) {
+        element.classList.toggle('map-marker-active', element.dataset.waypointId === activeWaypointId)
+      }
+    }
+  }, [activeWaypointId, mapReady, viaPoints])
+
+  useEffect(() => {
+    if (!activeWaypointId) return undefined
+
+    const closeFromOutside = (event) => {
+      const popupElement = waypointPopupRef.current?.getElement()
+      const clickedMarker = markersRef.current
+        .map((marker) => marker.getElement())
+        .find((element) => element.contains(event.target))
+      if (
+        popupElement?.contains(event.target) ||
+        clickedMarker
+      ) {
+        return
+      }
+      if (containerRef.current?.contains(event.target)) {
+        suppressMapClickRef.current = true
+        globalThis.setTimeout(() => {
+          suppressMapClickRef.current = false
+        }, 0)
+      }
+      activeWaypointIdRef.current = null
+      handlersRef.current.onWaypointSelect(null)
+    }
+
+    document.addEventListener('pointerdown', closeFromOutside)
+    return () => document.removeEventListener('pointerdown', closeFromOutside)
+  }, [activeWaypointId])
+
+  useEffect(() => {
     const map = mapRef.current
     const details = waypointDetails.find(({ id }) => id === activeWaypointId)
     waypointPopupRef.current?.remove()
@@ -336,20 +431,23 @@ export default function TrackMap({
       return
     }
 
+    const placement = getWaypointPopupPlacement(map, details)
+    const card = createWaypointCard(details, waypointCardLabels, {
+      onClose: () => handlersRef.current.onWaypointSelect(null),
+      onRemove: () => handlersRef.current.onWaypointRemove(details.id),
+      onToggleIncomingOffGrid: () => handlersRef.current.onWaypointIncomingModeToggle(details.incomingLegId),
+      onToggleOutgoingOffGrid: () => handlersRef.current.onWaypointOutgoingModeToggle(details.outgoingLegId),
+    })
+    card.style.maxHeight = `${placement.maxContentHeight}px`
     const popup = new maplibregl.Popup({
-      anchor: 'bottom',
+      anchor: placement.anchor,
       closeButton: false,
       closeOnClick: false,
       maxWidth: '330px',
       offset: 20,
     })
       .setLngLat([details.lon, details.lat])
-      .setDOMContent(createWaypointCard(details, waypointCardLabels, {
-        onClose: () => handlersRef.current.onWaypointSelect(null),
-        onRemove: () => handlersRef.current.onWaypointRemove(details.id),
-        onToggleIncomingOffGrid: () => handlersRef.current.onWaypointIncomingModeToggle(details.incomingLegId),
-        onToggleOutgoingOffGrid: () => handlersRef.current.onWaypointOutgoingModeToggle(details.outgoingLegId),
-      }))
+      .setDOMContent(card)
       .addTo(map)
 
     waypointPopupRef.current = popup
@@ -372,20 +470,35 @@ export default function TrackMap({
 
   useEffect(() => {
     const map = mapRef.current
-    if (!mapReady || !map || !track || fitRequest === previousFitRequestRef.current) {
+    if (!mapReady || !map || fitRequest === previousFitRequestRef.current) {
       return
     }
 
-    const bounds = getTrackBounds(track, routeSegments)
+    const controlPoints = [anchorPoint, ...viaPoints, endpoint].filter(Boolean)
+    const hasRouteGeometry = routeSegments.some((segment) => segment.geometry?.length >= 2)
+    if (!track?.points?.length && !hasRouteGeometry && controlPoints.length === 1) {
+      previousFitRequestRef.current = fitRequest
+      map.easeTo({
+        center: [controlPoints[0].lon, controlPoints[0].lat],
+        duration: 0,
+        zoom: Math.min(map.getZoom(), 12),
+      })
+      return
+    }
+    if (!track?.points?.length && !hasRouteGeometry && controlPoints.length < 2) {
+      return
+    }
+
+    const bounds = getTrackBounds(track, routeSegments, controlPoints)
     if (!bounds) {
       return
     }
 
     previousFitRequestRef.current = fitRequest
     map.fitBounds(bounds, { padding: 36, duration: 0 })
-  }, [fitRequest, mapReady, routeSegments, track])
+  }, [anchorPoint, endpoint, fitRequest, mapReady, routeSegments, track, viaPoints])
 
-  return <div ref={containerRef} className="map" />
+  return <div ref={containerRef} className="map" data-map-ready={mapReady ? 'true' : 'false'} />
 }
 
 function createMapStyle(activeLayer) {
@@ -396,7 +509,7 @@ function createMapStyle(activeLayer) {
         type: 'raster',
         tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
         tileSize: 256,
-        attribution: '&copy; OpenStreetMap contributors',
+        attribution: '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">&copy; OpenStreetMap contributors</a>',
       },
       satellite: {
         type: 'raster',
@@ -439,6 +552,16 @@ function createMapStyle(activeLayer) {
           'line-width': 4,
           'line-opacity': 0.95,
           'line-dasharray': [1.75, 1.75],
+        },
+      },
+      {
+        ...lineLayer('route-unresolved', 'route', '#cf4920', 4, 0.95),
+        filter: ['==', ['get', 'mode'], 'unresolved'],
+        paint: {
+          'line-color': '#cf4920',
+          'line-width': 4,
+          'line-opacity': 0.95,
+          'line-dasharray': [1, 1.5],
         },
       },
       lineLayer('route-hitbox', 'route', '#2454d2', 24, 0.01),
@@ -558,6 +681,10 @@ function addMarker(map, point, options) {
   if (options.title) {
     element.title = options.title
   }
+  const accessibleName = options.title || options.label
+  if (accessibleName) {
+    element.setAttribute('aria-label', accessibleName)
+  }
   if (options.waypointId) {
     element.dataset.waypointId = options.waypointId
   }
@@ -580,9 +707,17 @@ function addMarker(map, point, options) {
   }
 
   if (options.onClick) {
+    element.setAttribute('role', 'button')
+    element.tabIndex = 0
     element.addEventListener('click', (event) => {
       event.stopPropagation()
       if (Date.now() >= suppressClickUntil) {
+        options.onClick()
+      }
+    })
+    element.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
         options.onClick()
       }
     })
@@ -667,6 +802,33 @@ function createWaypointCard(details, labels, handlers) {
   return card
 }
 
+function getWaypointPopupPlacement(map, details) {
+  const mapBounds = map.getContainer().getBoundingClientRect()
+  const projected = map.project([details.lon, details.lat])
+  const viewportWidth = globalThis.visualViewport?.width ?? globalThis.innerWidth
+  const viewportHeight = globalThis.visualViewport?.height ?? globalThis.innerHeight
+  const pointX = mapBounds.left + projected.x
+  const pointY = mapBounds.top + projected.y
+  const margin = 16
+  const popupOffset = 28
+  const spaceAbove = Math.max(0, pointY - margin)
+  const spaceBelow = Math.max(0, viewportHeight - pointY - margin)
+  const verticalAnchor = spaceAbove >= spaceBelow ? 'bottom' : 'top'
+  const availableHeight = verticalAnchor === 'bottom' ? spaceAbove : spaceBelow
+  const popupWidth = Math.min(330, Math.max(0, viewportWidth - margin * 2))
+  const halfWidth = popupWidth / 2
+  const horizontalAnchor = pointX - halfWidth < margin
+    ? 'left'
+    : pointX + halfWidth > viewportWidth - margin
+      ? 'right'
+      : ''
+
+  return {
+    anchor: horizontalAnchor ? `${verticalAnchor}-${horizontalAnchor}` : verticalAnchor,
+    maxContentHeight: Math.max(80, Math.floor(availableHeight - popupOffset)),
+  }
+}
+
 function createOffGridToggle(label, checked, onChange) {
   const offGrid = document.createElement('label')
   offGrid.className = 'waypoint-card-toggle'
@@ -736,10 +898,11 @@ function getClosestRoutePoint(map, mousePoint, geometry) {
     : { lat: geometry[0].lat, lng: geometry[0].lon }
 }
 
-function getTrackBounds(track, routeSegments) {
+function getTrackBounds(track, routeSegments, controlPoints = []) {
   const points = [
     ...(track?.points ?? []),
     ...routeSegments.flatMap((segment) => segment.geometry ?? []),
+    ...controlPoints.filter(Boolean),
   ]
 
   if (!points.length) {

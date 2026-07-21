@@ -4,15 +4,23 @@ const brouterProfiles = {
 }
 
 export function getRoutingRequests(from, to, profile) {
+  return getRoutingRequestsForControls([from, to], profile)
+}
+
+export function getRoutingRequestsForControls(controls, profile) {
+  if (!Array.isArray(controls) || controls.length < 2) {
+    return []
+  }
+
   if (profile === 'driving') {
     return [{
       provider: 'osrm',
-      url: buildOsrmUrl('https://router.project-osrm.org/route/v1/driving', from, to),
+      url: buildOsrmUrl('https://router.project-osrm.org/route/v1/driving', controls),
     }]
   }
 
   const params = new URLSearchParams({
-    lonlats: `${from.lon},${from.lat}|${to.lon},${to.lat}`,
+    lonlats: controls.map(({ lat, lon }) => `${lon},${lat}`).join('|'),
     profile: brouterProfiles[profile] ?? brouterProfiles.cycling,
     alternativeidx: '0',
     format: 'geojson',
@@ -25,7 +33,8 @@ export function getRoutingRequests(from, to, profile) {
     },
     {
       provider: 'osrm',
-      url: buildOsrmUrl(`https://routing.openstreetmap.de/${fallbackProfile}/route/v1/driving`, from, to),
+      url: buildOsrmUrl(`https://routing.openstreetmap.de/${fallbackProfile}/route/v1/driving`, controls),
+      minimumIntervalMs: 1000,
     },
   ]
 }
@@ -53,8 +62,8 @@ function readFiniteNumber(value) {
   return Number.isFinite(number) ? number : null
 }
 
-function buildOsrmUrl(baseUrl, from, to) {
-  const coordinates = `${from.lon},${from.lat};${to.lon},${to.lat}`
+function buildOsrmUrl(baseUrl, controls) {
+  const coordinates = controls.map(({ lat, lon }) => `${lon},${lat}`).join(';')
   const params = new URLSearchParams({
     overview: 'full',
     geometries: 'geojson',

@@ -12,10 +12,10 @@ if [ ! -f "$PID_FILE" ]; then
 fi
 
 PID="$(tr -cd '0-9' < "$PID_FILE")"
-COMMAND="$(ps -p "$PID" -o command= 2>/dev/null || true)"
+EXECUTABLE="$(lsof -a -p "$PID" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1 || true)"
 
-case "$COMMAND" in
-  *fixyourtrack-server-*)
+case "$EXECUTABLE" in
+  "$RUNTIME/fixyourtrack-server-arm64"|"$RUNTIME/fixyourtrack-server-x64")
     kill "$PID" 2>/dev/null || true
     attempt=0
     while kill -0 "$PID" 2>/dev/null && [ "$attempt" -lt 20 ]; do

@@ -20,6 +20,11 @@ function Assert-ReleasePath {
 
 Push-Location $root
 try {
+  npm run supply-chain:check
+  if ($LASTEXITCODE -ne 0) {
+    throw "Supply-chain artifacts are stale or invalid."
+  }
+
   npm run build
   if ($LASTEXITCODE -ne 0) {
     throw "Application build failed."
@@ -43,6 +48,8 @@ try {
   Copy-Item -LiteralPath (Join-Path $root "packaging\windows\Stop FixYourTrack.cmd") -Destination $packageRoot
   Copy-Item -LiteralPath (Join-Path $root "packaging\windows\README.txt") -Destination $packageRoot
   Copy-Item -LiteralPath (Join-Path $root "packaging\windows\TESTING-CHECKLIST.txt") -Destination $packageRoot
+  Copy-Item -LiteralPath (Join-Path $root "THIRD_PARTY_NOTICES.txt") -Destination $packageRoot
+  Copy-Item -LiteralPath (Join-Path $root "SBOM.cdx.json") -Destination $packageRoot
   Copy-Item -LiteralPath (Join-Path $root "packaging\windows\FixYourTrack.Server.ps1") -Destination $runtimeRoot
   Copy-Item -LiteralPath (Join-Path $root "packaging\windows\FixYourTrack.Launch.ps1") -Destination $runtimeRoot
   Copy-Item -LiteralPath (Join-Path $root "packaging\windows\FixYourTrack.Stop.ps1") -Destination $runtimeRoot

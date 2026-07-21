@@ -13,6 +13,13 @@ export function buildExportTrack(
     return track
   }
 
+  if (!['before', 'middle', 'after'].includes(rebuildDirection)) {
+    throw new Error('Unknown repair direction.')
+  }
+  if (!routeGeometry.every(isValidCoordinate)) {
+    throw new Error('Repair route contains invalid coordinates.')
+  }
+
   if (rebuildDirection === 'before') {
     const anchorSample = track.samples[0]
     const repairedStart = rebuildSegmentSamples(anchorSample, removedSegmentSamples, routeGeometry, 'before')
@@ -25,11 +32,16 @@ export function buildExportTrack(
   }
 
   if (rebuildDirection === 'middle') {
-    if (!middleRepairRange) {
-      return track
+    const { startSampleIndex, endSampleIndex } = middleRepairRange ?? {}
+    if (
+      !Number.isInteger(startSampleIndex) ||
+      !Number.isInteger(endSampleIndex) ||
+      startSampleIndex < 0 ||
+      endSampleIndex <= startSampleIndex ||
+      endSampleIndex >= track.samples.length
+    ) {
+      throw new Error('Middle repair range is invalid.')
     }
-
-    const { startSampleIndex, endSampleIndex } = middleRepairRange
     const segmentSamples = track.samples.slice(startSampleIndex, endSampleIndex + 1)
     const repairedSegment = rebuildMiddleSegmentSamples(segmentSamples, routeGeometry)
 
@@ -96,7 +108,7 @@ export function buildGpx(track) {
     .map((segment) => {
       const pointsXml = segment
         .map((point) => {
-          const ele = point.ele !== null && point.ele !== undefined ? `<ele>${point.ele}</ele>` : ''
+          const ele = Number.isFinite(point.ele) ? `<ele>${formatMeasurement(point.ele, 2)}</ele>` : ''
           const time = point.time ? `<time>${escapeXml(point.time)}</time>` : ''
           const extensions = buildTrackPointExtensions(point)
           return `<trkpt lat="${formatCoordinate(point.lat)}" lon="${formatCoordinate(point.lon)}">${ele}${time}${extensions}</trkpt>`
@@ -137,7 +149,8 @@ export function haversineDistance(from, to) {
     Math.sin(latDiff / 2) * Math.sin(latDiff / 2) +
     Math.cos(lat1) * Math.cos(lat2) * Math.sin(lonDiff / 2) * Math.sin(lonDiff / 2)
 
-  return 2 * earthRadius * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value))
+  const clampedValue = Math.max(0, Math.min(1, value))
+  return 2 * earthRadius * Math.atan2(Math.sqrt(clampedValue), Math.sqrt(1 - clampedValue))
 }
 
 export function isValidCoordinate(point) {
@@ -175,10 +188,11 @@ function rebuildMiddleSegmentSamples(segmentSamples, routeGeometry) {
   }
 
   const progressRatios = getMiddleSegmentProgressRatios(segmentSamples)
+  const pointOnRoute = createPolylineSampler(routeGeometry)
   return segmentSamples.map((sample, index) => {
     const point = index === 0 || index === segmentSamples.length - 1
       ? sample
-      : getPointOnPolyline(routeGeometry, progressRatios[index])
+      : pointOnRoute(progressRatios[index])
     return {
       ...sample,
       lat: point.lat,
@@ -233,8 +247,9 @@ function rebuildSegmentSamples(anchorSample, segmentSamples, routeGeometry, rebu
   }
 
   const ratios = getSegmentProgressRatios(anchorSample, segmentSamples, rebuildDirection)
+  const pointOnRoute = createPolylineSampler(routeGeometry)
   return segmentSamples.map((sample, index) => {
-    const point = getPointOnPolyline(routeGeometry, ratios[index])
+    const point = pointOnRoute(ratios[index])
     return {
       ...sample,
       lat: point.lat,
@@ -312,41 +327,48 @@ function getSegmentProgressRatios(anchorSample, segmentSamples, rebuildDirection
   return allSamples.slice(1).map((_, index) => (index + 1) / segmentSamples.length)
 }
 
-function getPointOnPolyline(points, ratio) {
-  if (ratio <= 0) {
-    return { lat: points[0].lat, lon: points[0].lon }
+function createPolylineSampler(points) {
+  const cumulativeDistances = new Float64Array(points.length)
+  for (let index = 1; index < points.length; index += 1) {
+    cumulativeDistances[index] = cumulativeDistances[index - 1] +
+      haversineDistance(points[index - 1], points[index])
   }
+  const totalLength = cumulativeDistances.at(-1)
 
-  if (ratio >= 1) {
-    const lastPoint = points[points.length - 1]
-    return { lat: lastPoint.lat, lon: lastPoint.lon }
-  }
+  return (ratio) => {
+    if (ratio <= 0 || totalLength === 0) {
+      return { lat: points[0].lat, lon: points[0].lon }
+    }
+    if (ratio >= 1) {
+      const lastPoint = points[points.length - 1]
+      return { lat: lastPoint.lat, lon: lastPoint.lon }
+    }
 
-  const totalLength = getPolylineLength(points)
-  if (totalLength === 0) {
-    return { lat: points[0].lat, lon: points[0].lon }
-  }
-
-  let targetDistance = totalLength * ratio
-
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const from = points[index]
-    const to = points[index + 1]
-    const segmentLength = haversineDistance(from, to)
-
-    if (targetDistance <= segmentLength || index === points.length - 2) {
-      const localRatio = segmentLength === 0 ? 0 : targetDistance / segmentLength
-      return {
-        lat: from.lat + (to.lat - from.lat) * localRatio,
-        lon: from.lon + (to.lon - from.lon) * localRatio,
+    const targetDistance = totalLength * ratio
+    let low = 1
+    let high = cumulativeDistances.length - 1
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2)
+      if (cumulativeDistances[middle] < targetDistance) {
+        low = middle + 1
+      }
+      else {
+        high = middle
       }
     }
 
-    targetDistance -= segmentLength
+    const fromIndex = low - 1
+    const from = points[fromIndex]
+    const to = points[low]
+    const segmentLength = cumulativeDistances[low] - cumulativeDistances[fromIndex]
+    const localRatio = segmentLength === 0
+      ? 0
+      : (targetDistance - cumulativeDistances[fromIndex]) / segmentLength
+    return {
+      lat: from.lat + (to.lat - from.lat) * localRatio,
+      lon: from.lon + (to.lon - from.lon) * localRatio,
+    }
   }
-
-  const lastPoint = points[points.length - 1]
-  return { lat: lastPoint.lat, lon: lastPoint.lon }
 }
 
 function buildPointSegments(points) {
@@ -507,5 +529,13 @@ function escapeXml(value) {
 }
 
 function formatCoordinate(value) {
-  return Number.parseFloat(value.toFixed(7))
+  const fixed = value.toFixed(7)
+  const decimal = fixed
+    .replace(/\.0+$/, '')
+    .replace(/(\.\d*?)0+$/, '$1')
+  return decimal === '-0' ? '0' : decimal
+}
+
+function formatMeasurement(value, decimalPlaces) {
+  return Number.parseFloat(value.toFixed(decimalPlaces)).toString()
 }

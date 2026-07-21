@@ -48,6 +48,15 @@ test('GPX parser rejects documents without track or route points', () => {
   assert.throws(() => parseGpxDocument(document), /No track geometry/)
 })
 
+test('GPX parser rejects non-GPX XML documents', () => {
+  const xml = new DOMParser().parseFromString(
+    '<svg><trkseg><trkpt lat="55" lon="37" /></trkseg></svg>',
+    'application/xml',
+  )
+
+  assert.throws(() => parseGpxDocument(xml), /not a GPX file/)
+})
+
 test('exported GPX uses common Garmin and general sensor extension names', () => {
   const parsed = parseGpxDocument(
     new DOMParser().parseFromString(multiSegmentGpx, 'application/xml'),

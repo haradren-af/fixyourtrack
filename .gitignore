@@ -16,6 +16,7 @@ runtime/*.log
 runtime/*.pid
 runtime/*.url
 .vite-dev.*
+/artifacts/
 
 # Editor directories and files
 .vscode/*

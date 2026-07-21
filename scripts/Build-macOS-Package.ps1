@@ -26,7 +26,12 @@ function Assert-ReleasePath {
 }
 
 function Install-PortableGo {
-  if (Test-Path $portableGoExe) {
+  $portableGoIsComplete =
+    (Test-Path $portableGoExe -PathType Leaf) -and
+    (Test-Path (Join-Path $toolRoot "go\bin\gofmt.exe") -PathType Leaf) -and
+    (Test-Path (Join-Path $toolRoot "go\src\fmt\print.go") -PathType Leaf) -and
+    (Test-Path (Join-Path $toolRoot "go\pkg\tool\windows_amd64\compile.exe") -PathType Leaf)
+  if ($portableGoIsComplete) {
     return
   }
 
@@ -103,6 +108,11 @@ function Build-Server {
 
 Push-Location $root
 try {
+  npm run supply-chain:check
+  if ($LASTEXITCODE -ne 0) {
+    throw "Supply-chain artifacts are stale or invalid."
+  }
+
   npm run build
   if ($LASTEXITCODE -ne 0) {
     throw "Application build failed."
@@ -127,6 +137,8 @@ try {
   Copy-Item -LiteralPath (Join-Path $root "packaging\macos\Stop FixYourTrack.command") -Destination $packageRoot
   Copy-Item -LiteralPath (Join-Path $root "packaging\macos\README.txt") -Destination $packageRoot
   Copy-Item -LiteralPath (Join-Path $root "packaging\windows\TESTING-CHECKLIST.txt") -Destination $packageRoot
+  Copy-Item -LiteralPath (Join-Path $root "THIRD_PARTY_NOTICES.txt") -Destination $packageRoot
+  Copy-Item -LiteralPath (Join-Path $root "SBOM.cdx.json") -Destination $packageRoot
 
   Build-Server -Architecture "arm64" -OutputPath (Join-Path $runtimeRoot "fixyourtrack-server-arm64")
   Build-Server -Architecture "amd64" -OutputPath (Join-Path $runtimeRoot "fixyourtrack-server-x64")

@@ -3,6 +3,8 @@
   --bg-accent: #d9ded9;
   --text: #32423f;
   --text-h: #182523;
+  --muted: #566b66;
+  --panel: #f6f4ed;
   --accent: #d04a14;
   --sans: 'Segoe UI Variable', 'Segoe UI', sans-serif;
   --heading: Bahnschrift, 'Arial Narrow', sans-serif;
@@ -23,6 +25,8 @@
   --bg-accent: #101713;
   --text: #c5d1cb;
   --text-h: #f1f5f3;
+  --muted: #a9b9b2;
+  --panel: #18221e;
   --accent: #ff7a3a;
   color-scheme: dark;
 }

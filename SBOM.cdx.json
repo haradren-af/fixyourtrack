@@ -1,0 +1,1182 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:096aa06e-ccc3-548a-892b-89e5aab3867b",
+  "version": 1,
+  "metadata": {
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "FixYourTrack supply-chain generator",
+          "version": "1"
+        }
+      ]
+    },
+    "component": {
+      "type": "application",
+      "bom-ref": "pkg:npm/fixyourtrack@0.83.0",
+      "name": "fixyourtrack",
+      "version": "0.83.0",
+      "purl": "pkg:npm/fixyourtrack@0.83.0"
+    },
+    "properties": [
+      {
+        "name": "fixyourtrack:source",
+        "value": "package-lock.json production dependency graph"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40mapbox/jsonlint-lines-primitives@2.0.2",
+      "name": "@mapbox/jsonlint-lines-primitives",
+      "version": "2.0.2",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "ad8d28f40e440ac4d045586feed2ff3b20e9180a14078b53bcb896d434b3406ab86ef4cf84dc3556948d8c325ce46159d97bb23ad496495374e6a3ad703ef5a9"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40mapbox/jsonlint-lines-primitives@2.0.2",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/@mapbox/jsonlint-lines-primitives"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mapbox/jsonlint"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40mapbox/point-geometry@1.1.0",
+      "name": "@mapbox/point-geometry",
+      "version": "1.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "606701cf5720e004d70c233fef52fdc6f7a1e1dca77c699c2c3aae7d1fa7410cb77cac2c019b1677fc78eb6d7feae25a781f66c0e1c4ea13de0e05f3f6e56251"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40mapbox/point-geometry@1.1.0",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/@mapbox/point-geometry"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mapbox/point-geometry"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40mapbox/tiny-sdf@2.2.0",
+      "name": "@mapbox/tiny-sdf",
+      "version": "2.2.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "2d52f8c2023d600ba6e55f8b35540ee9080504fc3bfcc2086385c93cdb0f0ccae3130704f897ca9352ee225f069c5d7dede8d5742f5074f6b1af1e607e07465e"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40mapbox/tiny-sdf@2.2.0",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/@mapbox/tiny-sdf"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mapbox/tiny-sdf"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40mapbox/unitbezier@0.0.1",
+      "name": "@mapbox/unitbezier",
+      "version": "0.0.1",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "9cc92e0d716feb4681afdb28506e6af86bd960bfb62991d5beca850b3aa790611fe3a5367ef9b2b4768455cd7f6196e22e7f17f9e4774335f5f9dc033b597197"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40mapbox/unitbezier@0.0.1",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/@mapbox/unitbezier"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mapbox/unitbezier"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40mapbox/vector-tile@2.0.5",
+      "name": "@mapbox/vector-tile",
+      "version": "2.0.5",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "a578fc9bb293b2a66dfb58ec134c48a46bea4d26db95f92e1092ff34998d78f32d130c4ef15dd7303a3d58c49f0dea87bc2b4123d2e6b78986706475d3379c9b"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40mapbox/vector-tile@2.0.5",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/@mapbox/vector-tile"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mapbox/vector-tile-js"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40mapbox/whoots-js@3.1.0",
+      "name": "@mapbox/whoots-js",
+      "version": "3.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "12ce96703d273b997ed813904b8b8b7cd3d841a3437dba2ddd7d57528968cfec7498f0d2dde78e459265d3a1d78f0046d5f386c02467ccaf3c2cc771291adde9"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40mapbox/whoots-js@3.1.0",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/@mapbox/whoots-js"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mapbox/whoots-js"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40maplibre/geojson-vt@6.1.0",
+      "name": "@maplibre/geojson-vt",
+      "version": "6.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "d9e218e2067178a21539954d90031bfb93605e182c310a4ebde4d002f9e9e772d8a8718964389d93b130d1381e77d3d38627696d2f8d153874838ce2be13c3cd"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40maplibre/geojson-vt@6.1.0",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/@maplibre/geojson-vt"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/maplibre/geojson-vt"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40maplibre/maplibre-gl-style-spec@24.9.0",
+      "name": "@maplibre/maplibre-gl-style-spec",
+      "version": "24.9.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "ee9be38308a812d9c25d181f3e0a091a5160d63634ac15cda0f98c47cb8072a77a9ba7772e328c49cd60cda42244cbc3321eb08deeb3ec511e8d313a26e16d88"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40maplibre/maplibre-gl-style-spec@24.9.0",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/@maplibre/maplibre-gl-style-spec"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/maplibre/maplibre-style-spec"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40maplibre/mlt@1.1.11",
+      "name": "@maplibre/mlt",
+      "version": "1.1.11",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "74abe329d213c3d774cb79dd1a44aa2d41295828b332d76af0d074e9c1e8847fc9676b09a0cedd0a547dc3324b516ca48dbc3d4570c59a18e33419cd5b6ee6cf"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "(MIT OR Apache-2.0)"
+        }
+      ],
+      "purl": "pkg:npm/%40maplibre/mlt@1.1.11",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/@maplibre/mlt"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/maplibre/maplibre-tile-spec"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40maplibre/vt-pbf@4.3.2",
+      "name": "@maplibre/vt-pbf",
+      "version": "4.3.2",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "8faa7401d8ef011d7d6775da0b2b257bb038652a34f2d60ecf10f463d350ca5c0f024c0925e62e6f96f6795b9c75e0e1edeae1bfaf436a1a0b39ebc344445153"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40maplibre/vt-pbf@4.3.2",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/@maplibre/vt-pbf"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/maplibre/vt-pbf"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40types/geojson@7946.0.16",
+      "name": "@types/geojson",
+      "version": "7946.0.16",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "e82f27a96babde3f7c53afa55c37d351621f82f654f84ba6be91ca7188ee8ca1fbc286322e3dac5267dfd2d461aea33b068854c3b3f3dd90758e3da05bd16f9a"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40types/geojson@7946.0.16",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/@types/geojson"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/base64-js@1.5.1",
+      "name": "base64-js",
+      "version": "1.5.1",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "00aa5a6251e7f2de1255b3870b2f9be7e28a82f478bebb03f2f6efadb890269b3b7ca0d3923903af2ea38b4ad42630b49336cd78f2f0cf1abc8b2a68e35a9e58"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/base64-js@1.5.1",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/base64-js"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/beatgammit/base64-js"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/buffer@6.0.3",
+      "name": "buffer",
+      "version": "6.0.3",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "153882a4dc6dc226591c465b71b4c87198c44552029fdcaafe90c591397de7f031cc3d6768172d37b60eebcae233f80b48363bb1dacc6f2f21a1f00362ebaa38"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/buffer@6.0.3",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/buffer"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/feross/buffer"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/earcut@3.0.2",
+      "name": "earcut",
+      "version": "3.0.2",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "5fb86c8506cbc8c27fdd13e1c8e6cb011336b0dc7199100b2cac75f8d54516743d80ace60abc66f7eb8b20074172f73c14d2e972daa543657a004f763a5f540d"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "purl": "pkg:npm/earcut@3.0.2",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/earcut"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mapbox/earcut"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/fit-file-parser@2.3.3",
+      "name": "fit-file-parser",
+      "version": "2.3.3",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "4d93c57e39047afe534ddf519d9e319f8939652c7655988a363a19b072249900cad12d1703b79b7dd30b8fbe812bb912b6c1e1e566caf059a7ff0f398e077474"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/fit-file-parser@2.3.3",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/fit-file-parser"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/jimmykane/fit-parser"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/gl-matrix@3.4.4",
+      "name": "gl-matrix",
+      "version": "3.4.4",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "95ab529f20cdb7ff3361407a54827a3c28768c18c95fa8270eca0267b2f25bb1a4aab0f9d445b06bda82a068b18fc62a06d11340aff163b3a6a5317cc73d4375"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/gl-matrix@3.4.4",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/gl-matrix"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/toji/gl-matrix"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/ieee754@1.2.1",
+      "name": "ieee754",
+      "version": "1.2.1",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "75ccaa843bd7d42e3a95765c56a0a92be16d31141574830debf0dfe63b36ce8b94b2a1bb23ab05c62b480beeca60adbd29d5ce2c776ef732f8b059e85509ea68"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "purl": "pkg:npm/ieee754@1.2.1",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/ieee754"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/feross/ieee754"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/json-stringify-pretty-compact@4.0.0",
+      "name": "json-stringify-pretty-compact",
+      "version": "4.0.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "dc2359d839eba41c86f4daa3e97a3cbea6e34f817a37eb5be066f6f04480663619e72aaf99ce7a27efe4b88c2468030ec9b953421516ecfc4c9146fc437e8ddd"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/json-stringify-pretty-compact@4.0.0",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/json-stringify-pretty-compact"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/lydell/json-stringify-pretty-compact"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/kdbush@4.1.0",
+      "name": "kdbush",
+      "version": "4.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "7bdbeeaf3ad7250ac55fa724a473f76ef8f997ef429d8ce4c43367350d61d904ea756b1400981788a74635c39ad4463ce5d53c29b43ecff15d41d07b3fef727d"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "purl": "pkg:npm/kdbush@4.1.0",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/kdbush"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mourner/kdbush"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/maplibre-gl@5.24.0",
+      "name": "maplibre-gl",
+      "version": "5.24.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "00bc85c60b5de51fbae54a99ffefa53aac16702d12361a3d736edf612c8b986ec07e702e976a38e85d396832463db154e7bc28b3d760708c921ecd177ba89adc"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "purl": "pkg:npm/maplibre-gl@5.24.0",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/maplibre-gl"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/maplibre/maplibre-gl-js"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/minimist@1.2.8",
+      "name": "minimist",
+      "version": "1.2.8",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "db2c8047ca8190ddd8ba17896a7529582e54ddb6f9a2c0f2c0d07c4730d5943c031dba1c009bdeaaa8f5bbcf92543ee39164f8cafb070a95aaa96a80c5bd3308"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/minimist@1.2.8",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/minimist"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/minimistjs/minimist"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/murmurhash-js@1.0.0",
+      "name": "murmurhash-js",
+      "version": "1.0.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "4ef9a436192ff3272dd125414b2fa8f306335e3138673dcf09eb1b7ecf078825d775c4eea1c02916fd7551694d156298b0fda892aae16fb24d9529bd22706123"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/murmurhash-js@1.0.0",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/murmurhash-js"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mikolalysenko/murmurhash-js"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/pbf@4.0.2",
+      "name": "pbf",
+      "version": "4.0.2",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "2746a3c4046165fa5411e6f162cd6f84c18cb8b497b417b57be7c53c3adfdae036860a3e52c84a7cd5163b3f761c9373ebf345117b1e40f75d9c7913ade591aa"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "purl": "pkg:npm/pbf@4.0.2",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/pbf"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mapbox/pbf"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/pbf@5.1.0",
+      "name": "pbf",
+      "version": "5.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "5afd32a34fae65ea67a0d10ab2aba16abd45d7c2e8801f287848a42215171b5eae75b8971bb25e7071b24b0a28ea4b8c82399b418cddad36653befcaf6df1e66"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "purl": "pkg:npm/pbf@5.1.0",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/@maplibre/vt-pbf/node_modules/pbf"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mapbox/pbf"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/potpack@2.1.0",
+      "name": "potpack",
+      "version": "2.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "a5c6928507354a1ab4cbe13b1aa26abd98fc0d3b61595d4a78719d8b467a2008a7d8e8b72672c239fc270a8f38a9cf87029e76c13f672bd1fb140269e5ae3819"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "purl": "pkg:npm/potpack@2.1.0",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/potpack"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mapbox/potpack"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/protocol-buffers-schema@3.6.1",
+      "name": "protocol-buffers-schema",
+      "version": "3.6.1",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "546d8aeb7220922bfda7bead93596295ccc42b5713fa40a32ad91d870d5d41957793721725b777a3a1e8f1bf732596874a74f684a7b823e39b997f70ea6e5299"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/protocol-buffers-schema@3.6.1",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/protocol-buffers-schema"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mafintosh/protocol-buffers-schema"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/quickselect@3.0.0",
+      "name": "quickselect",
+      "version": "3.0.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "5dd8d402b6cae019b97cb2ef966e4aa5314e88e4e181f5962386b10190d683813fd2629d67223db4d11f76cdbba828b5cdefefc13475ea4be6986851adaddcda"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "purl": "pkg:npm/quickselect@3.0.0",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/quickselect"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "github:mourner/quickselect"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/react-dom@19.2.5",
+      "name": "react-dom",
+      "version": "19.2.5",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "2796c0673f835cc3305bfc15df1cca91ee7d01fe821d8ec6e2e60b3753af05c284b163ace29404c63f3a04129a9b197f224e5bc7dc213abbc19520df5b38126a"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/react-dom@19.2.5",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/react-dom"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/facebook/react"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/react@19.2.5",
+      "name": "react",
+      "version": "19.2.5",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "9655092f3cf5cd3501aec92dda9c1980bab9f407a689f21fb70e1a07b2713aa7f51d8d850da183c60c2900f5731d4d6475669b1fb15ab8fe22d6811e7abd9608"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/react@19.2.5",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/react"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/facebook/react"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/resolve-protobuf-schema@2.1.0",
+      "name": "resolve-protobuf-schema",
+      "version": "2.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "908e5f7d38995a625a4bf86e33cc197c431eaf579177ba094210eec5e08b7b7b7b37b997df3f7808dd313f1050c456104d2373f53d22fafea29caa9274af31ad"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/resolve-protobuf-schema@2.1.0",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/resolve-protobuf-schema"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mafintosh/resolve-protobuf-schema"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/scheduler@0.27.0",
+      "name": "scheduler",
+      "version": "0.27.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "78dbfe5ab55b2aed5fdef6d8253ff1b62179b320391cf20cb5ff48818fe72a0d2c5aacc0504bea63fc66ece71973fa9a7cbc7f88ef4580e99e480a78bf9b62fd"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/scheduler@0.27.0",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/scheduler"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/facebook/react"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/tinyqueue@3.0.0",
+      "name": "tinyqueue",
+      "version": "3.0.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "8116bd830614dc40a6418bf796c96db39871b886bdd2f79a11cc4362ebb740638800433698e664547a78f00349baed42511b51747294058e4b9b5b4757eb03e2"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "purl": "pkg:npm/tinyqueue@3.0.0",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/tinyqueue"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mourner/tinyqueue"
+        }
+      ]
+    }
+  ]
+}

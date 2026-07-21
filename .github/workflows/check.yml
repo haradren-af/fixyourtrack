@@ -21,25 +21,54 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
 
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: 1.26.4
+          cache: false
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+      - name: Check generated supply-chain artifacts
+        run: npm run supply-chain:check
 
       - name: Lint source
         run: npm run lint
 
+      - name: Check patch whitespace
+        run: git diff --check
+
       - name: Test repair logic
         run: npm test
 
+      - name: Test Go package tools
+        run: go test ./packaging/macos/server ./packaging/macos/zip
+
+      - name: Test Windows package server
+        run: npm run test:server:windows
+
+      - name: Test development startup
+        run: npm run test:dev:start
+
       - name: Build application
         run: npm run build
+
+      - name: Enforce bundle budgets
+        run: node scripts/Check-Bundle-Budget.mjs
 
       - name: Test browser workflow
         run: node scripts/Browser-Smoke-Test.mjs

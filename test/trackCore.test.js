@@ -5,6 +5,7 @@ import {
   buildExportTrack,
   buildGpx,
   finalizeTrack,
+  haversineDistance,
   isValidCoordinate,
 } from '../src/trackCore.js'
 
@@ -23,6 +24,16 @@ function sample(lat, lon, distance, time, extra = {}) {
     ...extra,
   }
 }
+
+test('distance calculation remains finite at antipodal coordinates', () => {
+  const distance = haversineDistance(
+    { lat: 0, lon: 0 },
+    { lat: 0, lon: 180 },
+  )
+
+  assert.equal(Number.isFinite(distance), true)
+  assert.ok(distance > 20_000_000)
+})
 
 test('middle repair preserves exact border coordinates and sensor fields', () => {
   const original = finalizeTrack({
@@ -140,6 +151,33 @@ test('GPX uses TrackPointExtension v2 for speed and escapes names', () => {
   assert.match(gpx, /<fixtrack:distance>0<\/fixtrack:distance>/)
   assert.match(gpx, /<name>A&amp;B<\/name>/)
   assert.doesNotMatch(gpx, /NaN|null|undefined/)
+})
+
+test('GPX elevation values use bounded fixed decimal notation', () => {
+  const gpx = buildGpx({
+    name: 'Elevation',
+    samples: [
+      { lat: 1, lon: 2, ele: 1e-7, segmentStart: true },
+      { lat: 1.1, lon: 2.1, ele: 123.456 },
+    ],
+  })
+  assert.match(gpx, /<ele>0<\/ele>/)
+  assert.match(gpx, /<ele>123\.46<\/ele>/)
+  assert.doesNotMatch(gpx, /<ele>[^<]*e[+-]?\d/i)
+})
+
+test('GPX coordinates remain valid fixed-decimal values near zero', () => {
+  const gpx = buildGpx({
+    name: 'Prime meridian crossing',
+    samples: [
+      { lat: 1e-7, lon: -1e-7, segmentStart: true },
+      { lat: -2e-7, lon: 2e-7 },
+    ],
+  })
+
+  assert.match(gpx, /lat="0\.0000001" lon="-0\.0000001"/)
+  assert.match(gpx, /lat="-0\.0000002" lon="0\.0000002"/)
+  assert.doesNotMatch(gpx, /(?:lat|lon)="[^"]*e[+-]?\d/i)
 })
 
 test('GPX preserves internal sensor-only samples by interpolating coordinates', () => {

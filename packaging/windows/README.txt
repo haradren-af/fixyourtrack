@@ -28,6 +28,9 @@ TROUBLESHOOTING
 - Keep the complete extracted folder together.
 - If Windows SmartScreen appears, choose "More info" and verify the source.
 - If the browser does not open, run "Start FixYourTrack.cmd" again.
+- FixYourTrack uses local port 4173 so browser drafts remain available between
+  launches. If the log says that port is unavailable, close the program using
+  it and start FixYourTrack again.
 - Technical startup details are written to runtime\server.log.
 
 
@@ -61,4 +64,7 @@ FixYourTrack для Windows
 - Не перемещайте отдельные файлы из распакованной папки.
 - Если появился Windows SmartScreen, выберите "Подробнее" и проверьте источник.
 - Если браузер не открылся, снова запустите "Start FixYourTrack.cmd".
+- FixYourTrack использует локальный порт 4173, чтобы черновики браузера были
+  доступны между запусками. Если в журнале сказано, что порт занят, закройте
+  использующую его программу и снова запустите FixYourTrack.
 - Технический журнал запуска находится в runtime\server.log.

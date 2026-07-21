@@ -1,6 +1,7 @@
 import { Component } from 'react'
 import packageMetadata from '../package.json'
 import { createSafeErrorReport } from './errorReport'
+import { readLocalPreference } from './storage'
 
 export default class ErrorBoundary extends Component {
   state = {
@@ -21,8 +22,10 @@ export default class ErrorBoundary extends Component {
     const link = document.createElement('a')
     link.href = url
     link.download = `fixyourtrack-diagnostic-${this.state.report.occurredAt.replaceAll(':', '-')}.json`
+    document.body.append(link)
     link.click()
-    URL.revokeObjectURL(url)
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
   }
 
   render() {
@@ -30,7 +33,10 @@ export default class ErrorBoundary extends Component {
       return this.props.children
     }
 
-    const isRussian = window.localStorage.getItem('fixyourtrack-language') !== 'en'
+    const storedLanguage = readLocalPreference('fixyourtrack-language')
+    const isRussian = storedLanguage === 'ru' || (
+      storedLanguage !== 'en' && window.navigator.language?.toLowerCase().startsWith('ru')
+    )
     return (
       <main className="crash-page">
         <section className="crash-panel">

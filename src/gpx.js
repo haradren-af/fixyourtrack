@@ -5,6 +5,9 @@ export function parseGpxDocument(xml, fallbackName = 'track') {
   ) {
     throw new Error('The GPX file contains invalid XML.')
   }
+  if (xml.documentElement?.localName?.toLowerCase() !== 'gpx') {
+    throw new Error('The selected XML document is not a GPX file.')
+  }
 
   const trackSegments = Array.from(xml.getElementsByTagNameNS('*', 'trkseg'))
   const routePoints = Array.from(xml.getElementsByTagNameNS('*', 'rtept'))
