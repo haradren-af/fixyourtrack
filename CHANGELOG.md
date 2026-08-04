@@ -6,6 +6,20 @@ FixYourTrack uses [Semantic Versioning](https://semver.org/):
 - Minor releases (`0.10.0`) contain meaningful feature batches.
 - Version `1.0.0` will mark the first stable release.
 
+## 0.83.1 - 2026-08-04
+
+### Changed
+
+- Hid the original-track comparison overlay by default after an edit and added an explicit map control for showing it when needed.
+- Updated transitive build dependencies to patched versions after new npm security advisories.
+
+### Fixed
+
+- Prevented FIT distance counters that freeze during GPS loss and catch up in one record from recreating a long diagonal after a routed middle repair.
+- Preserved every sensor field and changed coordinates only inside the selected pass when the same road is ridden again later in the activity.
+- Prevented a completed route preview from being applied after repair controls or routing settings have changed.
+- Extended browser coverage for applying a middle repair and toggling the original-track comparison layer.
+
 ## 0.83.0 - 2026-07-21
 
 ### Added

@@ -22,6 +22,7 @@ import {
   splitLeg,
 } from './routeLegs'
 import { buildRouteDisplayPreview, buildRoutePreview, readBoundedJson } from './routeBuilder'
+import { getRoutePreviewFingerprint, isCurrentRoutePreview } from './routePreviewState'
 import { readLocalPreference, writeLocalPreference } from './storage'
 import { getSuspiciousSegments } from './trackDetection'
 import {
@@ -198,6 +199,7 @@ function App() {
   const [middleRepairRange, setMiddleRepairRange] = useState(null)
   const [routeProfile, setRouteProfile] = useState(getStoredRouteProfile)
   const [mapLayer, setMapLayer] = useState(getStoredMapLayer)
+  const [showOriginalTrack, setShowOriginalTrack] = useState(false)
   const [mapMode, setMapMode] = useState('inspect')
   const [endpoint, setEndpoint] = useState(null)
   const [viaPoints, setViaPoints] = useState([])
@@ -206,6 +208,7 @@ function App() {
   const [routePreview, setRoutePreview] = useState({
     status: 'idle',
     error: '',
+    fingerprint: '',
     segments: [],
     geometry: [],
     distanceMeters: 0,
@@ -344,17 +347,23 @@ function App() {
     ]
   }, [anchorPoint, endpoint, rebuildDirection, viaPoints])
 
+  const routeFingerprint = useMemo(
+    () => getRoutePreviewFingerprint(controlPoints, legModes, routeProfile),
+    [controlPoints, legModes, routeProfile],
+  )
+
   const effectiveRoutePreview = useMemo(() => (
-    controlPoints.length
+    isCurrentRoutePreview(routePreview, routeFingerprint)
       ? routePreview
       : {
-          status: endpoint ? 'idle' : 'empty',
+          status: controlPoints.length ? 'loading' : endpoint ? 'idle' : 'empty',
           error: '',
+          fingerprint: routeFingerprint,
           segments: [],
           geometry: [],
           distanceMeters: 0,
         }
-  ), [controlPoints.length, endpoint, routePreview])
+  ), [controlPoints.length, endpoint, routeFingerprint, routePreview])
 
   const routeStartDistanceMeters = useMemo(() => {
     if (rebuildDirection === 'before' || !anchorPoint) {
@@ -660,6 +669,7 @@ function App() {
     setRoutePreview(buildRouteDisplayPreview(controlPoints, legModes, routeProfile, {
       cache: routeLegCacheRef.current,
       status: 'loading',
+      fingerprint: routeFingerprint,
     }))
 
     async function refreshRoutePreview() {
@@ -670,7 +680,7 @@ function App() {
         })
 
         if (!cancelled) {
-          setRoutePreview(nextPreview)
+          setRoutePreview({ ...nextPreview, fingerprint: routeFingerprint })
           if (pendingRouteFitRef.current) {
             pendingRouteFitRef.current = false
             setFitRequest((current) => current + 1)
@@ -685,6 +695,7 @@ function App() {
         setRoutePreview(buildRouteDisplayPreview(controlPoints, legModes, routeProfile, {
           cache: routeLegCacheRef.current,
           status: 'error',
+          fingerprint: routeFingerprint,
           error: nextError instanceof Error ? nextError.message : 'Could not build route preview.',
           failedLegId: nextError?.fromControlId ?? null,
           failedToControlId: nextError?.toControlId ?? null,
@@ -699,7 +710,7 @@ function App() {
       window.clearTimeout(buildTimer)
       abortController.abort()
     }
-  }, [controlPoints, endpoint, legModes, routeProfile])
+  }, [controlPoints, legModes, routeFingerprint, routeProfile])
 
   async function establishRepairDraftSaveBarrier() {
     repairDraftSaveQueueRef.current.invalidate()
@@ -739,6 +750,7 @@ function App() {
         : null
       setSourceTrack(loadedTrack)
       setTrack(loadedTrack)
+      setShowOriginalTrack(false)
       setSelectedCutPointIndex(null)
       setManualMiddleStartIndex(null)
       setTailAnchorPointIndex(null)
@@ -765,6 +777,7 @@ function App() {
       if (!hadTrack) {
         setSourceTrack(null)
         setTrack(null)
+        setShowOriginalTrack(false)
         setSelectedCutPointIndex(null)
         setManualMiddleStartIndex(null)
         setTailAnchorPointIndex(null)
@@ -893,6 +906,7 @@ function App() {
 
     pushRepairHistory('restore', track)
     setTrack(sourceTrack)
+    setShowOriginalTrack(false)
     setSelectedCutPointIndex(null)
     setManualMiddleStartIndex(null)
     setTailAnchorPointIndex(null)
@@ -974,6 +988,7 @@ function App() {
 
       setSourceTrack(restoredSource)
       setTrack(restoredWorking)
+      setShowOriginalTrack(false)
       setSelectedCutPointIndex(hasRepairSession ? repairSession.selectedCutPointIndex ?? null : null)
       setManualMiddleStartIndex(null)
       setTailAnchorPointIndex(hasRepairSession ? repairSession.tailAnchorPointIndex ?? null : null)
@@ -1194,17 +1209,21 @@ function App() {
     setMessage(t('middleEndExpanded'))
   }
 
-  function applyMiddleRepair() {
-    if (!track || !middleRepairRange || effectiveRoutePreview.status !== 'ready') {
+  async function applyMiddleRepair() {
+    if (
+      !track ||
+      !middleRepairRange ||
+      effectiveRoutePreview.status !== 'ready' ||
+      effectiveRoutePreview.fingerprint !== routeFingerprint
+    ) {
       setError(t('waitForRoute'))
       return
     }
 
-    const repairedTrack = buildExportTrack(
+    const { buildMiddleRepairTrack } = await import('./middleRepair')
+    const repairedTrack = buildMiddleRepairTrack(
       track,
-      removedSegmentSamples,
       effectiveRoutePreview.geometry,
-      rebuildDirection,
       middleRepairRange,
     )
 
@@ -1495,7 +1514,6 @@ function App() {
         removedSegmentSamples,
         effectiveRoutePreview.geometry,
         rebuildDirection,
-        middleRepairRange,
       )
 
       if (correctElevationOnExport) {
@@ -2465,6 +2483,16 @@ function App() {
             >
               {t('satelliteLayer')}
             </button>
+            {hasTrackEdits ? (
+              <button
+                type="button"
+                aria-pressed={showOriginalTrack}
+                className={showOriginalTrack ? 'map-layer-button-active' : ''}
+                onClick={() => setShowOriginalTrack((current) => !current)}
+              >
+                {t('originalTrackLayer')}
+              </button>
+            ) : null}
           </div>
           {isPickingEndpoint || isAddingOffGrid ? (
             <div className="map-mode-banner">
@@ -2483,7 +2511,6 @@ function App() {
               endpoint={endpoint}
               endpointLabel={endpointLabel}
               fitRequest={fitRequest}
-              hasTrackEdits={hasTrackEdits}
               highlightedTrackPoints={chartHighlightedPoints}
               initialView={initialView}
               interactionMode={mapMode}
@@ -2505,6 +2532,7 @@ function App() {
               routeSegments={effectiveRoutePreview.segments}
               selectedCutPoint={selectedCutPoint}
               selectedCutPointLabel={t('cutPoint')}
+              showSourceTrack={hasTrackEdits && showOriginalTrack}
               sourceTrack={sourceTrack}
               suspiciousSegments={suspiciousSegments}
               track={track}

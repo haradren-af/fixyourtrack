@@ -16,7 +16,6 @@ export default function TrackMap({
   endpoint,
   endpointLabel,
   fitRequest,
-  hasTrackEdits,
   highlightedTrackPoints,
   initialView,
   interactionMode,
@@ -38,6 +37,7 @@ export default function TrackMap({
   routeSegments,
   selectedCutPoint,
   selectedCutPointLabel,
+  showSourceTrack = false,
   sourceTrack,
   suspiciousSegments,
   track,
@@ -253,8 +253,8 @@ export default function TrackMap({
       return
     }
 
-    setSourceData(map, 'source-track', hasTrackEdits ? trackToGeoJson(sourceTrack) : EMPTY_COLLECTION)
-  }, [hasTrackEdits, mapReady, sourceTrack])
+    setSourceData(map, 'source-track', showSourceTrack ? trackToGeoJson(sourceTrack) : EMPTY_COLLECTION)
+  }, [mapReady, showSourceTrack, sourceTrack])
 
   useEffect(() => {
     const map = mapRef.current
@@ -498,7 +498,14 @@ export default function TrackMap({
     map.fitBounds(bounds, { padding: 36, duration: 0 })
   }, [anchorPoint, endpoint, fitRequest, mapReady, routeSegments, track, viaPoints])
 
-  return <div ref={containerRef} className="map" data-map-ready={mapReady ? 'true' : 'false'} />
+  return (
+    <div
+      ref={containerRef}
+      className="map"
+      data-map-ready={mapReady ? 'true' : 'false'}
+      data-source-track-visible={showSourceTrack ? 'true' : 'false'}
+    />
+  )
 }
 
 function createMapStyle(activeLayer) {
@@ -526,7 +533,15 @@ function createMapStyle(activeLayer) {
     layers: [
       rasterLayer('scheme-base', 'scheme', activeLayer === 'scheme'),
       rasterLayer('satellite-base', 'satellite', activeLayer === 'satellite'),
-      lineLayer('source-track-line', 'source-track', '#6d7c78', 4, 0.32),
+      {
+        ...lineLayer('source-track-line', 'source-track', '#655f5a', 3, 0.58),
+        paint: {
+          'line-color': '#655f5a',
+          'line-width': 3,
+          'line-opacity': 0.58,
+          'line-dasharray': [2, 2],
+        },
+      },
       lineLayer('track-outline', 'track', '#ffffff', 9, 0.72),
       lineLayer('track-line', 'track', '#1d5f56', 5, 0.9),
       lineLayer('track-hitbox', 'track', '#1d5f56', 22, 0.01),

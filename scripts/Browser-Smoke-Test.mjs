@@ -408,8 +408,19 @@ try {
   await waypointCard.waitFor({ state: 'detached' })
   await page.getByText('Waypoint removed. The joined section now follows mapped roads.', { exact: true }).waitFor()
 
-  await cancelRepairButton.click()
-  assert(await exportButton.isEnabled(), 'Export must be enabled after the repair is cancelled.')
+  await page.locator('.note-good').filter({ hasText: 'Suggested rebuild length' }).waitFor()
+  await page.getByRole('button', { name: 'Apply middle segment' }).click()
+
+  const originalTrackToggle = page.getByRole('button', { name: 'Original', exact: true })
+  await originalTrackToggle.waitFor()
+  assert(await exportButton.isEnabled(), 'Export must be enabled after the repair is applied.')
+  const repairMap = page.locator('.map-panel .map')
+  assert(await originalTrackToggle.getAttribute('aria-pressed') === 'false', 'Original track comparison must default to off.')
+  assert(await repairMap.getAttribute('data-source-track-visible') === 'false', 'Applied repairs must hide the source track.')
+  await originalTrackToggle.click()
+  assert(await repairMap.getAttribute('data-source-track-visible') === 'true', 'Original track comparison must be explicitly available.')
+  await originalTrackToggle.click()
+  assert(await repairMap.getAttribute('data-source-track-visible') === 'false', 'Original track comparison must turn off again.')
 
   const downloadPromise = page.waitForEvent('download')
   await exportButton.click()

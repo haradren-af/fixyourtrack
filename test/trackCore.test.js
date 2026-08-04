@@ -8,6 +8,7 @@ import {
   haversineDistance,
   isValidCoordinate,
 } from '../src/trackCore.js'
+import { buildMiddleRepairTrack } from '../src/middleRepair.js'
 
 function sample(lat, lon, distance, time, extra = {}) {
   return {
@@ -48,15 +49,13 @@ test('middle repair preserves exact border coordinates and sensor fields', () =>
     ],
   })
 
-  const repaired = buildExportTrack(
+  const repaired = buildMiddleRepairTrack(
     original,
-    original.samples.slice(1, 4),
     [
       { lat: 54, lon: 36 },
       { lat: 55.002, lon: 37.002 },
       { lat: 57, lon: 39 },
     ],
-    'middle',
     { startSampleIndex: 1, endSampleIndex: 3 },
   )
 
@@ -73,6 +72,82 @@ test('middle repair preserves exact border coordinates and sensor fields', () =>
   assert.equal(repaired.samples[2].cadence, original.samples[2].cadence)
   assert.equal(repaired.samples[2].power, original.samples[2].power)
   assert.equal(repaired.samples[2].repairAccepted, true)
+})
+
+test('middle repair changes only the selected pass when the same road is ridden in reverse later', () => {
+  const start = { lat: 55, lon: 37 }
+  const finish = { lat: 55.003, lon: 37.003 }
+  const routeMiddle = { lat: 55.0015, lon: 37.0015 }
+  const original = finalizeTrack({
+    name: 'out-and-back',
+    format: 'fit',
+    samples: [
+      sample(54.999, 36.999, 0, '2026-01-01T00:00:00Z'),
+      sample(start.lat, start.lon, 100, '2026-01-01T00:00:10Z'),
+      sample(56, 38, 200, '2026-01-01T00:00:20Z'),
+      sample(finish.lat, finish.lon, 300, '2026-01-01T00:00:30Z'),
+      sample(55.004, 37.004, 400, '2026-01-01T00:00:40Z'),
+      sample(finish.lat, finish.lon, 500, '2026-01-01T01:00:00Z'),
+      sample(routeMiddle.lat, routeMiddle.lon, 600, '2026-01-01T01:00:10Z'),
+      sample(start.lat, start.lon, 700, '2026-01-01T01:00:20Z'),
+      sample(54.999, 36.999, 800, '2026-01-01T01:00:30Z'),
+    ],
+  })
+
+  const repaired = buildMiddleRepairTrack(
+    original,
+    [start, routeMiddle, finish],
+    { startSampleIndex: 1, endSampleIndex: 3 },
+  )
+
+  assert.ok(haversineDistance(repaired.samples[2], routeMiddle) < 0.01)
+  assert.deepEqual(repaired.samples.slice(4), original.samples.slice(4))
+})
+
+test('middle repair ignores a frozen distance counter followed by a catch-up jump', () => {
+  const start = { lat: 55, lon: 37 }
+  const corner = { lat: 55, lon: 37.004 }
+  const finish = { lat: 55.004, lon: 37.004 }
+  const distances = [100, 110, 120, 120, 120, 120, 120, 120, 380, 385, 392, 400]
+  const selectedPass = distances.map((distance, index) => sample(
+    index === 0 ? start.lat : (index === distances.length - 1 ? finish.lat : null),
+    index === 0 ? start.lon : (index === distances.length - 1 ? finish.lon : null),
+    distance,
+    new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
+    { speed: index >= 3 && index <= 7 ? null : 5 },
+  ))
+  const reversePass = [
+    sample(finish.lat, finish.lon, 900, '2026-01-01T01:00:00Z'),
+    sample(corner.lat, corner.lon, 1200, '2026-01-01T01:01:00Z'),
+    sample(start.lat, start.lon, 1500, '2026-01-01T01:02:00Z'),
+  ]
+  const original = finalizeTrack({
+    name: 'distance-catch-up',
+    format: 'fit',
+    samples: [
+      sample(54.999, 36.999, 90, '2026-01-01T00:00:00Z'),
+      ...selectedPass,
+      ...reversePass,
+    ],
+  })
+
+  const repaired = buildMiddleRepairTrack(
+    original,
+    [start, corner, finish],
+    { startSampleIndex: 1, endSampleIndex: selectedPass.length },
+  )
+  const repairedPass = repaired.samples.slice(1, selectedPass.length + 1)
+  const routeLength = haversineDistance(start, corner) + haversineDistance(corner, finish)
+  const largestRepairedStep = Math.max(...repairedPass.slice(1).map((point, index) => (
+    haversineDistance(repairedPass[index], point)
+  )))
+
+  assert.ok(largestRepairedStep < routeLength * 0.2)
+  assert.deepEqual(
+    repairedPass.map(({ distance, speed }) => ({ distance, speed })),
+    selectedPass.map(({ distance, speed }) => ({ distance, speed })),
+  )
+  assert.deepEqual(repaired.samples.slice(selectedPass.length + 1), reversePass)
 })
 
 test('routed geometry is anchored to exact requested control points', () => {

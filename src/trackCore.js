@@ -3,7 +3,6 @@ export function buildExportTrack(
   removedSegmentSamples,
   routeGeometry,
   rebuildDirection,
-  middleRepairRange = null,
 ) {
   if (!track) {
     throw new Error('No track loaded.')
@@ -13,7 +12,7 @@ export function buildExportTrack(
     return track
   }
 
-  if (!['before', 'middle', 'after'].includes(rebuildDirection)) {
+  if (!['before', 'after'].includes(rebuildDirection)) {
     throw new Error('Unknown repair direction.')
   }
   if (!routeGeometry.every(isValidCoordinate)) {
@@ -28,31 +27,6 @@ export function buildExportTrack(
       ...track,
       name: getCleanedTrackName(track.name),
       samples: [...repairedStart, ...track.samples],
-    })
-  }
-
-  if (rebuildDirection === 'middle') {
-    const { startSampleIndex, endSampleIndex } = middleRepairRange ?? {}
-    if (
-      !Number.isInteger(startSampleIndex) ||
-      !Number.isInteger(endSampleIndex) ||
-      startSampleIndex < 0 ||
-      endSampleIndex <= startSampleIndex ||
-      endSampleIndex >= track.samples.length
-    ) {
-      throw new Error('Middle repair range is invalid.')
-    }
-    const segmentSamples = track.samples.slice(startSampleIndex, endSampleIndex + 1)
-    const repairedSegment = rebuildMiddleSegmentSamples(segmentSamples, routeGeometry)
-
-    return finalizeTrack({
-      ...track,
-      name: getCleanedTrackName(track.name),
-      samples: [
-        ...track.samples.slice(0, startSampleIndex),
-        ...repairedSegment,
-        ...track.samples.slice(endSampleIndex + 1),
-      ],
     })
   }
 
@@ -182,65 +156,6 @@ function getCleanedTrackName(name) {
   return baseName.endsWith('-cleaned') ? baseName : `${baseName}-cleaned`
 }
 
-function rebuildMiddleSegmentSamples(segmentSamples, routeGeometry) {
-  if (segmentSamples.length < 2 || routeGeometry.length < 2) {
-    return segmentSamples
-  }
-
-  const progressRatios = getMiddleSegmentProgressRatios(segmentSamples)
-  const pointOnRoute = createPolylineSampler(routeGeometry)
-  return segmentSamples.map((sample, index) => {
-    const point = index === 0 || index === segmentSamples.length - 1
-      ? sample
-      : pointOnRoute(progressRatios[index])
-    return {
-      ...sample,
-      lat: point.lat,
-      lon: point.lon,
-      repairAccepted: true,
-    }
-  })
-}
-
-function getMiddleSegmentProgressRatios(segmentSamples) {
-  const firstSample = segmentSamples[0]
-  const lastSample = segmentSamples[segmentSamples.length - 1]
-  const firstDistance = firstSample?.distance
-  const lastDistance = lastSample?.distance
-
-  if (
-    Number.isFinite(firstDistance) &&
-    Number.isFinite(lastDistance) &&
-    lastDistance > firstDistance
-  ) {
-    const totalDistance = lastDistance - firstDistance
-    return segmentSamples.map((sample, index) => {
-      const fallback = index / (segmentSamples.length - 1)
-      const progress = Number.isFinite(sample.distance)
-        ? (sample.distance - firstDistance) / totalDistance
-        : fallback
-      return clamp01(progress)
-    })
-  }
-
-  const firstTime = firstSample?.time ? new Date(firstSample.time).getTime() : null
-  const lastTime = lastSample?.time ? new Date(lastSample.time).getTime() : null
-
-  if (Number.isFinite(firstTime) && Number.isFinite(lastTime) && lastTime > firstTime) {
-    const totalTime = lastTime - firstTime
-    return segmentSamples.map((sample, index) => {
-      const fallback = index / (segmentSamples.length - 1)
-      const sampleTime = sample.time ? new Date(sample.time).getTime() : null
-      const progress = Number.isFinite(sampleTime)
-        ? (sampleTime - firstTime) / totalTime
-        : fallback
-      return clamp01(progress)
-    })
-  }
-
-  return segmentSamples.map((_, index) => index / (segmentSamples.length - 1))
-}
-
 function rebuildSegmentSamples(anchorSample, segmentSamples, routeGeometry, rebuildDirection) {
   if (!segmentSamples.length) {
     return []
@@ -327,7 +242,7 @@ function getSegmentProgressRatios(anchorSample, segmentSamples, rebuildDirection
   return allSamples.slice(1).map((_, index) => (index + 1) / segmentSamples.length)
 }
 
-function createPolylineSampler(points) {
+export function createPolylineSampler(points) {
   const cumulativeDistances = new Float64Array(points.length)
   for (let index = 1; index < points.length; index += 1) {
     cumulativeDistances[index] = cumulativeDistances[index - 1] +

@@ -1793,7 +1793,6 @@ export default function CreateRouteWorkspace({
           endpoint={endpoint}
           endpointLabel={labels.finish}
           fitRequest={fitRequest}
-          hasTrackEdits={false}
           highlightedTrackPoints={[]}
           initialView={initialView}
           interactionMode={interactionMode}

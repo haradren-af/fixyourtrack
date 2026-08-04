@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:096aa06e-ccc3-548a-892b-89e5aab3867b",
+  "serialNumber": "urn:uuid:b73682fe-20df-551c-8c92-2edf20eaffd8",
   "version": 1,
   "metadata": {
     "tools": {
@@ -15,10 +15,10 @@
     },
     "component": {
       "type": "application",
-      "bom-ref": "pkg:npm/fixyourtrack@0.83.0",
+      "bom-ref": "pkg:npm/fixyourtrack@0.83.1",
       "name": "fixyourtrack",
-      "version": "0.83.0",
-      "purl": "pkg:npm/fixyourtrack@0.83.0"
+      "version": "0.83.1",
+      "purl": "pkg:npm/fixyourtrack@0.83.1"
     },
     "properties": [
       {
