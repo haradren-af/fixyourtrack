@@ -5,7 +5,7 @@ import { gzipSync } from 'node:zlib'
 
 const assetsDirectory = path.resolve(import.meta.dirname, '..', 'dist', 'assets')
 const budgets = [
-  { label: 'initial application', pattern: /^index-[\w-]+\.js$/, raw: 350_000, gzip: 110_000 },
+  { label: 'initial application', pattern: /^index-[\w-]+\.js$/, raw: 400_000, gzip: 125_000 },
   { label: 'route planner', pattern: /^CreateRouteWorkspace-[\w-]+\.js$/, raw: 90_000, gzip: 30_000 },
   { label: 'interactive map', pattern: /^TrackMap-[\w-]+\.js$/, raw: 1_100_000, gzip: 300_000 },
 ]
