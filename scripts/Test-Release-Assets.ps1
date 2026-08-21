@@ -7,6 +7,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "Get-Sha256Hex.ps1")
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $packageJsonPath = Join-Path $projectRoot "package.json"
 $packageMetadata = Get-Content -LiteralPath $packageJsonPath -Raw | ConvertFrom-Json
@@ -77,7 +78,7 @@ foreach ($assetName in $assetNames) {
   if (-not $expectedChecksums.ContainsKey($assetName)) {
     throw "SHA256SUMS.txt does not cover $assetName"
   }
-  $actual = (Get-FileHash -LiteralPath (Join-Path $ReleaseDirectory $assetName) -Algorithm SHA256).Hash.ToLowerInvariant()
+  $actual = Get-Sha256Hex -LiteralPath (Join-Path $ReleaseDirectory $assetName)
   if ($actual -ne $expectedChecksums[$assetName]) {
     throw "SHA-256 mismatch for $assetName"
   }

@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "Get-Sha256Hex.ps1")
 
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $ReleaseDirectory) {
@@ -33,7 +34,7 @@ $checksumLines = foreach ($assetName in $assetNames) {
   if (-not (Test-Path -LiteralPath $assetPath -PathType Leaf)) {
     throw "Cannot assemble release because $assetName is missing."
   }
-  $hash = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  $hash = Get-Sha256Hex -LiteralPath $assetPath
   "$hash  $assetName"
 }
 $checksumLines | Set-Content -LiteralPath (Join-Path $ReleaseDirectory "SHA256SUMS.txt") -Encoding ASCII
