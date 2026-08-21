@@ -21,6 +21,7 @@ try {
   browser = await chromium.launch({
     executablePath: browserPath,
     headless: true,
+    args: headlessWebGlArgs(),
   })
   const primaryContext = await browser.newContext()
   const page = await primaryContext.newPage()
@@ -697,6 +698,15 @@ function findBrowserExecutable() {
     throw new Error('No supported local Edge, Chrome, or Chromium browser was found.')
   }
   return executable
+}
+
+function headlessWebGlArgs() {
+  // GitHub's GPU-less Windows runners need an explicit software WebGL backend.
+  return [
+    '--use-gl=angle',
+    '--use-angle=swiftshader',
+    '--enable-unsafe-swiftshader',
+  ]
 }
 
 async function waitForServer(targetUrl) {

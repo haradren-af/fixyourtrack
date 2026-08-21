@@ -20,7 +20,11 @@ const server = externalUrl
 let browser
 try {
   await waitForServer(url)
-  browser = await chromium.launch({ executablePath: browserPath, headless: true })
+  browser = await chromium.launch({
+    executablePath: browserPath,
+    headless: true,
+    args: headlessWebGlArgs(),
+  })
   const page = await browser.newPage()
   const clientErrors = []
   page.on('console', (message) => {
@@ -81,6 +85,15 @@ function findBrowserExecutable() {
   const executable = candidates.find((candidate) => fs.existsSync(candidate))
   if (!executable) throw new Error('Chrome, Edge, or Chromium is required for the development startup smoke test.')
   return executable
+}
+
+function headlessWebGlArgs() {
+  // GitHub's GPU-less Windows runners need an explicit software WebGL backend.
+  return [
+    '--use-gl=angle',
+    '--use-angle=swiftshader',
+    '--enable-unsafe-swiftshader',
+  ]
 }
 
 function assert(condition, message) {
