@@ -441,8 +441,8 @@ try {
   await page.reload({ waitUntil: 'domcontentloaded' })
   await page.getByRole('button', { name: 'Resume draft' }).click()
   await readyRepairNote.waitFor()
-  assert(
-    await page.getByRole('button', { name: 'Apply middle segment' }).isEnabled(),
+  await waitForEnabled(
+    page.getByRole('button', { name: 'Apply middle segment' }),
     'A restored ready repair must remain applicable without rebuilding its road geometry online.',
   )
   assert(
@@ -729,6 +729,15 @@ function assert(condition, message) {
   if (!condition) {
     throw new Error(message)
   }
+}
+
+async function waitForEnabled(locator, message) {
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    if (await locator.count() === 1 && await locator.isEnabled()) return
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  throw new Error(message)
 }
 
 async function assertHeaderLayout(page, {
