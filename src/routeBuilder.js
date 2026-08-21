@@ -178,34 +178,20 @@ export async function buildRoutePreview(
       index += 1
     }
     const run = descriptors.slice(runStart, index)
-    const runControls = [run[0].from, ...run.map(({ to }) => to)]
 
-    try {
-      const runSegments = await fetchRouteSegments(runControls, profile, {
-        signal,
-        fetchImpl,
-        timeoutMs: requestTimeoutMs,
-        deadlineAt,
-        requestBudget,
-        maxResponseBytes: responseByteLimit,
-        maxGeometryPoints: Math.min(previewPointLimit, segmentPointLimit * run.length),
-        maxSegmentGeometryPoints: segmentPointLimit,
-      })
-      for (let runIndex = 0; runIndex < run.length; runIndex += 1) {
-        run[runIndex].segment = runSegments[runIndex]
-        cacheRouteSegment(
-          cache,
-          run[runIndex].cacheKey,
-          runSegments[runIndex],
-          cacheLimit,
-          cachePointLimit,
-        )
-      }
-    }
-    catch (error) {
-      if (signal?.aborted) throw error
-      throw new RouteBuildError(run[0].from, run.at(-1).to, error)
-    }
+    await resolveRoutedRun(run, profile, {
+      signal,
+      fetchImpl,
+      timeoutMs: requestTimeoutMs,
+      deadlineAt,
+      requestBudget,
+      maxResponseBytes: responseByteLimit,
+      maxSegmentGeometryPoints: segmentPointLimit,
+      maxPreviewGeometryPoints: previewPointLimit,
+      cache,
+      cacheLimit,
+      cachePointLimit,
+    })
   }
 
   const segments = []
@@ -251,7 +237,67 @@ export async function buildRoutePreview(
     segments,
     geometry,
     distanceMeters,
+    snappedControls: buildSnappedControls(controlPoints, segments),
   }
+}
+
+async function resolveRoutedRun(run, profile, options) {
+  const {
+    signal,
+    fetchImpl,
+    timeoutMs,
+    deadlineAt,
+    requestBudget,
+    maxResponseBytes,
+    maxSegmentGeometryPoints,
+    maxPreviewGeometryPoints,
+    cache,
+    cacheLimit,
+    cachePointLimit,
+  } = options
+  const controls = [run[0].from, ...run.map(({ to }) => to)]
+
+  try {
+    const segments = await fetchRouteSegments(controls, profile, {
+      signal,
+      fetchImpl,
+      timeoutMs,
+      deadlineAt,
+      requestBudget,
+      maxResponseBytes,
+      maxGeometryPoints: Math.min(
+        maxPreviewGeometryPoints,
+        maxSegmentGeometryPoints * run.length,
+      ),
+      maxSegmentGeometryPoints,
+    })
+    for (let index = 0; index < run.length; index += 1) {
+      run[index].segment = segments[index]
+      cacheRouteSegment(
+        cache,
+        run[index].cacheKey,
+        segments[index],
+        cacheLimit,
+        cachePointLimit,
+      )
+    }
+    return
+  }
+  catch (error) {
+    if (signal?.aborted) throw error
+    if (run.length === 1 || !canSplitFailedRun(error)) {
+      throw new RouteBuildError(run[0].from, run.at(-1).to, error)
+    }
+  }
+
+  const middle = Math.ceil(run.length / 2)
+  await resolveRoutedRun(run.slice(0, middle), profile, options)
+  await resolveRoutedRun(run.slice(middle), profile, options)
+}
+
+function canSplitFailedRun(error) {
+  return error?.name !== 'RouteBuildDeadlineError' &&
+    !(error instanceof RouteResourceLimitError && !error.providerSpecific)
 }
 
 function countRequiredRoutingRequests(descriptors) {
@@ -495,6 +541,61 @@ export function buildRouteDisplayPreview(
   }
 }
 
+export function hydrateRouteLegCache(
+  cache,
+  controlPoints,
+  legModes,
+  profile,
+  preview,
+  {
+    cacheLimit = defaultRouteLegCacheEntries,
+    cachePointLimit = maximumRouteLegCachePoints,
+  } = {},
+) {
+  if (
+    !cache ||
+    !Array.isArray(controlPoints) ||
+    controlPoints.length < 2 ||
+    !Array.isArray(preview?.segments) ||
+    preview.segments.length !== controlPoints.length - 1
+  ) {
+    return 0
+  }
+
+  let restored = 0
+  for (let index = 0; index < preview.segments.length; index += 1) {
+    const from = controlPoints[index]
+    const to = controlPoints[index + 1]
+    const expectedMode = getLegMode(legModes, from.id) === directLegMode
+      ? directLegMode
+      : 'routed'
+    const segment = preview.segments[index]
+    try {
+      validateBuiltSegment(segment, maximumRoutedSegmentPoints)
+    }
+    catch {
+      continue
+    }
+    if (
+      segment.mode !== expectedMode ||
+      !hasSameCoordinate(segment.geometry[0], from) ||
+      !hasSameCoordinate(segment.geometry.at(-1), to)
+    ) {
+      continue
+    }
+
+    const cacheKey = getRouteLegFingerprint(from, to, profile, expectedMode)
+    cacheRouteSegment(cache, cacheKey, {
+      mode: expectedMode,
+      geometry: segment.geometry.map(({ lat, lon }) => ({ lat, lon })),
+      distanceMeters: segment.distanceMeters,
+    }, cacheLimit, cachePointLimit)
+    restored += 1
+  }
+
+  return restored
+}
+
 export function appendSegmentGeometry(currentGeometry, nextGeometry) {
   if (!currentGeometry.length) {
     return [...nextGeometry]
@@ -582,10 +683,29 @@ function splitProviderGeometry(geometry, controls, segmentPointLimit) {
     if (!Number.isFinite(distanceMeters) || distanceMeters < 0) {
       throw new RoutingRequestError('routing result contains an invalid distance')
     }
-    segments.push({ mode: 'routed', geometry: anchoredGeometry, distanceMeters })
+    segments.push({
+      mode: 'routed',
+      geometry: anchoredGeometry,
+      distanceMeters,
+      snappedFrom: { ...geometry[geometryStart] },
+      snappedTo: { ...geometry[geometryEnd] },
+    })
     geometryStart = geometryEnd
   }
   return segments
+}
+
+function buildSnappedControls(controlPoints, segments) {
+  return controlPoints.map((control, index) => {
+    const previousSegment = index > 0 ? segments[index - 1] : null
+    const nextSegment = index < segments.length ? segments[index] : null
+    const snappedPoint = previousSegment?.snappedTo ?? nextSegment?.snappedFrom
+    return {
+      id: control.id,
+      lat: snappedPoint?.lat ?? control.lat,
+      lon: snappedPoint?.lon ?? control.lon,
+    }
+  })
 }
 
 function findClosestGeometryIndex(geometry, control, startIndex, endIndex) {
@@ -624,6 +744,10 @@ function hasOnlyValidGeometryPoints(geometry) {
     }
   }
   return true
+}
+
+function hasSameCoordinate(left, right) {
+  return left?.lat === right?.lat && left?.lon === right?.lon
 }
 
 export function trimRouteLegCache(cache, limit, pointLimit = maximumRouteLegCachePoints) {

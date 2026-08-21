@@ -350,3 +350,56 @@ test('rejects a ready preview that does not match its selected repair controls',
     },
   }), null)
 })
+
+test('preserves successful road legs from an interrupted route build', () => {
+  const via = { id: 'via', lat: 55.005, lon: 37.005, manualPoint: false }
+  const draft = normalizeRepairDraft({
+    schemaVersion: 3,
+    savedAt: '2026-06-10T12:00:00Z',
+    sourceTrack: track,
+    workingTrack: track,
+    repairSession: {
+      rebuildDirection: 'middle',
+      middleRepairRange: { startSampleIndex: 0, endSampleIndex: 1 },
+      selectedCutPointIndex: null,
+      tailAnchorPointIndex: 0,
+      removedSegmentSamples: track.samples,
+      endpoint: { lat: 55.01, lon: 37.01 },
+      viaPoints: [via],
+      legModes: {},
+      activeWaypointId: null,
+      mapMode: 'inspect',
+      routePreview: {
+        status: 'error',
+        error: 'Provider unavailable',
+        failedLegId: 'via',
+        failedToControlId: 'endpoint',
+        geometry: [track.samples[0], via, track.samples[1]],
+        segments: [
+          {
+            id: 'anchor-via',
+            insertAfterId: 'anchor',
+            mode: 'routed',
+            geometry: [track.samples[0], via],
+            distanceMeters: 100,
+          },
+          {
+            id: 'via-endpoint',
+            insertAfterId: 'via',
+            mode: 'unresolved',
+            geometry: [via, track.samples[1]],
+            distanceMeters: 100,
+          },
+        ],
+        distanceMeters: 200,
+      },
+    },
+  })
+
+  assert.equal(draft.repairSession.routePreview.status, 'error')
+  assert.deepEqual(
+    draft.repairSession.routePreview.segments.map(({ mode }) => mode),
+    ['routed', 'unresolved'],
+  )
+  assert.equal(draft.repairSession.routePreview.failedLegId, 'via')
+})

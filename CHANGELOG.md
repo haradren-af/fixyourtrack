@@ -6,6 +6,21 @@ FixYourTrack uses [Semantic Versioning](https://semver.org/):
 - Minor releases (`0.10.0`) contain meaningful feature batches.
 - Version `1.0.0` will mark the first stable release.
 
+## 0.83.4 - 2026-08-21
+
+### Changed
+
+- Snapped user-placed routed controls to nearby mapped roads and paths while keeping recorded FIT boundaries and explicitly manual sections fixed.
+- Added automatic pedestrian-path fallbacks when cycling routing cannot follow a mapped sidewalk or trail.
+- Replaced internal waypoint identifiers in routing failures with clear point numbers and an actionable retry option.
+
+### Fixed
+
+- Allowed a complete manually drawn repair to be applied exactly as shown when external routing services cannot confirm part of it.
+- Preserved resolved road geometry in local repair drafts instead of restoring routed sections as straight temporary lines.
+- Preserved and exported composed repairs after rebuilding a track beginning and subsequently repairing a middle section.
+- Split failed multi-waypoint routing batches into valid legs so one unsupported section no longer discards every successfully routed section.
+
 ## 0.83.1 - 2026-08-04
 
 ### Changed

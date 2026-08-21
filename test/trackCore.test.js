@@ -196,6 +196,58 @@ test('tail repair restores removed records and marks them accepted', () => {
   )
 })
 
+test('rebuilt beginning and later middle repair compose into one export with sensors intact', () => {
+  const sourceSamples = [
+    sample(null, null, 0, '2026-01-01T00:00:00Z', { heartRate: 120, segmentStart: true }),
+    sample(null, null, 100, '2026-01-01T00:00:10Z', { heartRate: 121 }),
+    sample(null, null, 200, '2026-01-01T00:00:20Z', { heartRate: 122 }),
+    sample(55.003, 37.003, 300, '2026-01-01T00:00:30Z', { heartRate: 123 }),
+    sample(55.004, 37.004, 400, '2026-01-01T00:00:40Z', { heartRate: 124 }),
+    sample(55.005, 37.005, 500, '2026-01-01T00:00:50Z', { heartRate: 125 }),
+    sample(56, 38, 600, '2026-01-01T00:01:00Z', { heartRate: 126 }),
+    sample(55.007, 37.007, 700, '2026-01-01T00:01:10Z', { heartRate: 127 }),
+    sample(55.008, 37.008, 800, '2026-01-01T00:01:20Z', { heartRate: 128 }),
+  ]
+  const trimmed = finalizeTrack({
+    name: 'composed-repair',
+    format: 'fit',
+    samples: sourceSamples.slice(3),
+  })
+  const rebuilt = buildExportTrack(
+    trimmed,
+    sourceSamples.slice(0, 3),
+    [
+      { lat: 55, lon: 37 },
+      { lat: 55.0015, lon: 37.0015 },
+      { lat: 55.003, lon: 37.003 },
+    ],
+    'before',
+  )
+  const repaired = buildMiddleRepairTrack(
+    rebuilt,
+    [
+      { lat: 55.005, lon: 37.005 },
+      { lat: 55.006, lon: 37.006 },
+      { lat: 55.007, lon: 37.007 },
+    ],
+    { startSampleIndex: 5, endSampleIndex: 7 },
+  )
+  const gpx = buildGpx(repaired)
+
+  assert.equal(repaired.samples.length, sourceSamples.length)
+  assert.deepEqual(
+    repaired.samples.map(({ heartRate }) => heartRate),
+    sourceSamples.map(({ heartRate }) => heartRate),
+  )
+  assert.deepEqual(
+    { lat: repaired.samples[0].lat, lon: repaired.samples[0].lon },
+    { lat: 55, lon: 37 },
+  )
+  assert.ok(haversineDistance(repaired.samples[6], { lat: 55.006, lon: 37.006 }) < 0.01)
+  assert.equal((gpx.match(/<trkpt /g) ?? []).length, sourceSamples.length)
+  assert.equal((gpx.match(/<gpxtpx:hr>/g) ?? []).length, sourceSamples.length)
+})
+
 test('invalid coordinates are excluded from geometry but retained as samples', () => {
   const track = finalizeTrack({
     name: 'ride',

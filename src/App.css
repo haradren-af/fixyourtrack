@@ -1207,6 +1207,15 @@
   color: #8d2d0f;
 }
 
+.route-retry-note {
+  display: grid;
+  gap: 10px;
+}
+
+.route-retry-note .ghost-button {
+  color: inherit;
+}
+
 .note-neutral {
   background: rgba(32, 60, 103, 0.08);
   border-color: rgba(32, 60, 103, 0.14);

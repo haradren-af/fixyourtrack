@@ -8,6 +8,7 @@ import {
   buildRoutePreview,
   emptyRoutePreview,
   getRouteLegFingerprint,
+  hydrateRouteLegCache,
   RouteBuildError,
   RouteResourceLimitError,
   trimRouteLegCache,
@@ -35,6 +36,36 @@ test('builds direct legs without a network request', async () => {
   assert.deepEqual(preview.segments.map(({ mode }) => mode), ['direct', 'direct'])
   assert.deepEqual(preview.geometry, [start, waypoint, finish].map(({ lat, lon }) => ({ lat, lon })))
   assert.ok(preview.distanceMeters > 0)
+})
+
+test('reports provider-snapped controls while keeping preview geometry on requested boundaries', async () => {
+  const snappedStart = { lat: start.lat + 0.00002, lon: start.lon + 0.00005 }
+  const snappedFinish = { lat: finish.lat + 0.00002, lon: finish.lon + 0.00004 }
+  const preview = await buildRoutePreview([start, finish], {}, 'cycling', {
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({
+        features: [{
+          geometry: {
+            type: 'LineString',
+            coordinates: [
+              [snappedStart.lon, snappedStart.lat],
+              [37.62, 55.751],
+              [snappedFinish.lon, snappedFinish.lat],
+            ],
+          },
+          properties: { 'track-length': 100 },
+        }],
+      }),
+    }),
+  })
+
+  assert.deepEqual(preview.geometry[0], { lat: start.lat, lon: start.lon })
+  assert.deepEqual(preview.geometry.at(-1), { lat: finish.lat, lon: finish.lon })
+  assert.deepEqual(preview.snappedControls, [
+    { id: start.id, ...snappedStart },
+    { id: finish.id, ...snappedFinish },
+  ])
 })
 
 test('joins adjacent segment geometry without duplicating the shared point', () => {
@@ -160,6 +191,101 @@ test('batches only consecutive uncached routed legs across direct boundaries', a
 
   assert.equal(fetchCount, 2)
   assert.deepEqual(preview.segments.map(({ mode }) => mode), ['routed', 'direct', 'routed'])
+})
+
+test('splits a failed waypoint batch and preserves road routing for every valid leg', async () => {
+  const controls = [
+    start,
+    waypoint,
+    finish,
+    { id: 'extra', lat: 55.753, lon: 37.64 },
+  ]
+  let fetchCount = 0
+  const fetchImpl = async (resource) => {
+    fetchCount += 1
+    const coordinates = new URL(resource).pathname
+      .split('/driving/')[1]
+      .split(';')
+      .map((value) => value.split(',').map(Number))
+    if (coordinates.length > 2) {
+      return { ok: false, status: 400 }
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        routes: [{ geometry: { coordinates }, distance: 100 }],
+      }),
+    }
+  }
+
+  const preview = await buildRoutePreview(controls, {}, 'driving', { fetchImpl })
+
+  assert.equal(preview.status, 'ready')
+  assert.deepEqual(preview.segments.map(({ mode }) => mode), ['routed', 'routed', 'routed'])
+  assert.equal(fetchCount, 5)
+})
+
+test('hydrates valid saved road geometry into the route-leg cache', () => {
+  const controls = [start, waypoint, finish]
+  const preview = {
+    status: 'error',
+    segments: [
+      {
+        id: 'start-via-1',
+        insertAfterId: 'start',
+        mode: 'routed',
+        geometry: [start, waypoint].map(({ lat, lon }) => ({ lat, lon })),
+        distanceMeters: 100,
+      },
+      {
+        id: 'via-1-finish',
+        insertAfterId: 'via-1',
+        mode: 'unresolved',
+        geometry: [waypoint, finish].map(({ lat, lon }) => ({ lat, lon })),
+        distanceMeters: 100,
+      },
+    ],
+  }
+  const cache = new Map()
+
+  assert.equal(hydrateRouteLegCache(cache, controls, {}, 'cycling', preview), 1)
+  assert.equal(cache.size, 1)
+  assert.deepEqual(
+    cache.get(getRouteLegFingerprint(start, waypoint, 'cycling', 'routed')).geometry,
+    preview.segments[0].geometry,
+  )
+})
+
+test('falls back to mapped pedestrian paths when cycling providers find no route', async () => {
+  const requestedUrls = []
+  const fetchImpl = async (resource) => {
+    requestedUrls.push(resource)
+    if (resource.includes('profile=hiking-beta')) {
+      return {
+        ok: true,
+        json: async () => ({
+          features: [{
+            type: 'Feature',
+            properties: { 'track-length': 150 },
+            geometry: {
+              type: 'LineString',
+              coordinates: [[start.lon, start.lat], [finish.lon, finish.lat]],
+            },
+          }],
+        }),
+      }
+    }
+    return { ok: true, json: async () => ({}) }
+  }
+
+  const preview = await buildRoutePreview([start, finish], {}, 'cycling', { fetchImpl })
+
+  assert.equal(preview.status, 'ready')
+  assert.equal(preview.segments[0].mode, 'routed')
+  assert.equal(requestedUrls.length, 3)
+  assert.match(requestedUrls[0], /profile=trekking/)
+  assert.match(requestedUrls[1], /routed-bike/)
+  assert.match(requestedUrls[2], /profile=hiking-beta/)
 })
 
 test('rejects a negative provider distance instead of publishing it', async () => {

@@ -2,7 +2,7 @@
 
 Local-first browser tool for repairing recorded GPS tracks and planning new GPX routes.
 
-Current tester version: **0.83.1**
+Current tester version: **0.83.4**
 
 ## Tester Package
 

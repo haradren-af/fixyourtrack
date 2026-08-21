@@ -473,7 +473,7 @@ function normalizeMiddleRange(range, sampleCount) {
 }
 
 function normalizeRoutePreview(preview, controlPoints, legModes) {
-  if (preview?.status !== 'ready') {
+  if (!['ready', 'error'].includes(preview?.status)) {
     return {
       status: 'idle',
       error: '',
@@ -493,11 +493,13 @@ function normalizeRoutePreview(preview, controlPoints, legModes) {
   ) {
     return null
   }
+  const allowUnresolved = preview.status === 'error'
   const segments = preview.segments.map((segment, index) => normalizeRouteSegment(
     segment,
     controlPoints[index],
     controlPoints[index + 1],
     legModes[controlPoints[index].id] === 'direct' ? 'direct' : 'routed',
+    allowUnresolved,
   ))
   if (segments.some((segment) => !segment)) {
     return null
@@ -510,23 +512,38 @@ function normalizeRoutePreview(preview, controlPoints, legModes) {
   ) {
     return null
   }
+  const controlIds = new Set(controlPoints.map(({ id }) => id))
+  const error = preview.status === 'error' && typeof preview.error === 'string'
+    ? preview.error.slice(0, 2000)
+    : ''
+  const failedLegId = preview.status === 'error' && controlIds.has(preview.failedLegId)
+    ? preview.failedLegId
+    : null
+  const failedToControlId = preview.status === 'error' && controlIds.has(preview.failedToControlId)
+    ? preview.failedToControlId
+    : null
+
   return {
-    status: 'ready',
-    error: '',
+    status: preview.status,
+    error,
+    failedLegId,
+    failedToControlId,
     segments,
     geometry,
     distanceMeters: preview.distanceMeters,
   }
 }
 
-function normalizeRouteSegment(segment, from, to, expectedMode) {
+function normalizeRouteSegment(segment, from, to, expectedMode, allowUnresolved = false) {
+  const modeMatches = segment?.mode === expectedMode ||
+    (allowUnresolved && expectedMode === 'routed' && segment?.mode === 'unresolved')
   if (
     !segment ||
     typeof segment !== 'object' ||
     Array.isArray(segment) ||
     segment.id !== `${from.id}-${to.id}` ||
     segment.insertAfterId !== from.id ||
-    segment.mode !== expectedMode ||
+    !modeMatches ||
     !Array.isArray(segment.geometry) ||
     segment.geometry.length < 2 ||
     segment.geometry.some((point) => !hasValidCoordinate(point)) ||

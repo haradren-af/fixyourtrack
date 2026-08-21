@@ -21,8 +21,18 @@ import {
   setLegMode,
   splitLeg,
 } from './routeLegs'
-import { buildRouteDisplayPreview, buildRoutePreview, readBoundedJson } from './routeBuilder'
-import { getRoutePreviewFingerprint, isCurrentRoutePreview } from './routePreviewState'
+import {
+  buildRouteDisplayPreview,
+  buildRoutePreview,
+  hydrateRouteLegCache,
+  readBoundedJson,
+} from './routeBuilder'
+import {
+  getRoutePreviewFingerprint,
+  isApplicableRoutePreview,
+  isCurrentRoutePreview,
+} from './routePreviewState'
+import { getRouteControlSnapUpdates } from './routeSnapping'
 import { readLocalPreference, writeLocalPreference } from './storage'
 import { getSuspiciousSegments } from './trackDetection'
 import {
@@ -213,6 +223,7 @@ function App() {
     geometry: [],
     distanceMeters: 0,
   })
+  const [routeBuildRequest, setRouteBuildRequest] = useState(0)
   const [message, setMessage] = useState(() => translate(getStoredLanguage(), 'ready'))
   const [error, setError] = useState('')
   const [isLoadingTrack, setIsLoadingTrack] = useState(false)
@@ -328,23 +339,7 @@ function App() {
   }, [manualMiddleStartIndex, track])
 
   const controlPoints = useMemo(() => {
-    if (!anchorPoint || !endpoint) {
-      return []
-    }
-
-    if (rebuildDirection === 'before') {
-      return [
-        { id: 'endpoint', lat: endpoint.lat, lon: endpoint.lon, kind: 'endpoint' },
-        ...viaPoints.map((point) => ({ ...point, kind: 'via' })),
-        { id: 'anchor', lat: anchorPoint.lat, lon: anchorPoint.lon, kind: 'anchor' },
-      ]
-    }
-
-    return [
-      { id: 'anchor', lat: anchorPoint.lat, lon: anchorPoint.lon, kind: 'anchor' },
-      ...viaPoints.map((point) => ({ ...point, kind: 'via' })),
-      { id: 'endpoint', lat: endpoint.lat, lon: endpoint.lon, kind: 'endpoint' },
-    ]
+    return buildRepairControlPoints(rebuildDirection, anchorPoint, endpoint, viaPoints)
   }, [anchorPoint, endpoint, rebuildDirection, viaPoints])
 
   const routeFingerprint = useMemo(
@@ -364,6 +359,27 @@ function App() {
           distanceMeters: 0,
         }
   ), [controlPoints.length, endpoint, routeFingerprint, routePreview])
+
+  const routeCanBeApplied = isApplicableRoutePreview(
+    effectiveRoutePreview,
+    routeFingerprint,
+    controlPoints.length,
+  )
+  const routeFailureMessage = useMemo(() => {
+    if (effectiveRoutePreview.status !== 'error') {
+      return ''
+    }
+
+    const fromIndex = controlPoints.findIndex(({ id }) => (
+      id === effectiveRoutePreview.failedLegId
+    ))
+    const toIndex = controlPoints.findIndex(({ id }) => (
+      id === effectiveRoutePreview.failedToControlId
+    ))
+    return fromIndex >= 0 && toIndex >= 0
+      ? t('routeSectionUnconfirmed', { from: fromIndex + 1, to: toIndex + 1 })
+      : t('routeUnconfirmed')
+  }, [controlPoints, effectiveRoutePreview, t])
 
   const routeStartDistanceMeters = useMemo(() => {
     if (rebuildDirection === 'before' || !anchorPoint) {
@@ -464,7 +480,7 @@ function App() {
   }, [effectiveRoutePreview.distanceMeters, language, rebuildDirection, removedSegmentSamples, track])
 
   const repairQuality = useMemo(() => {
-    if (effectiveRoutePreview.status !== 'ready' || effectiveRoutePreview.geometry.length < 2) {
+    if (!routeCanBeApplied) {
       return null
     }
 
@@ -477,11 +493,11 @@ function App() {
       : null
 
     return {
-      directSegments: effectiveRoutePreview.segments.filter((segment) => segment.mode === 'direct').length,
+      directSegments: effectiveRoutePreview.segments.filter((segment) => segment.mode !== 'routed').length,
       differencePercent,
       largeDetour: differencePercent !== null && differencePercent > 80,
     }
-  }, [effectiveRoutePreview, removedSegmentSamples])
+  }, [effectiveRoutePreview, removedSegmentSamples, routeCanBeApplied])
 
   const completedRepairs = useMemo(
     () => countAcceptedRepairGroups(track?.samples ?? []),
@@ -680,7 +696,35 @@ function App() {
         })
 
         if (!cancelled) {
-          setRoutePreview({ ...nextPreview, fingerprint: routeFingerprint })
+          const { snappedControls, ...publishedPreview } = nextPreview
+          const fixedControlIds = rebuildDirection === 'middle'
+            ? ['anchor', 'endpoint']
+            : ['anchor']
+          const snapUpdates = getRouteControlSnapUpdates(
+            controlPoints,
+            snappedControls,
+            legModes,
+            { fixedControlIds },
+          )
+          if (snapUpdates.length) {
+            const updatesById = new Map(snapUpdates.map((point) => [point.id, point]))
+            const endpointUpdate = updatesById.get('endpoint')
+            if (endpointUpdate) {
+              setEndpoint((current) => current && ({
+                ...current,
+                lat: endpointUpdate.lat,
+                lon: endpointUpdate.lon,
+              }))
+            }
+            setViaPoints((current) => current.map((point) => {
+              const update = updatesById.get(point.id)
+              return update ? { ...point, lat: update.lat, lon: update.lon } : point
+            }))
+            setMessage(t('routePointsSnapped', { count: snapUpdates.length }))
+            return
+          }
+
+          setRoutePreview({ ...publishedPreview, fingerprint: routeFingerprint })
           if (pendingRouteFitRef.current) {
             pendingRouteFitRef.current = false
             setFitRequest((current) => current + 1)
@@ -710,7 +754,7 @@ function App() {
       window.clearTimeout(buildTimer)
       abortController.abort()
     }
-  }, [controlPoints, legModes, routeFingerprint, routeProfile])
+  }, [controlPoints, legModes, rebuildDirection, routeBuildRequest, routeFingerprint, routeProfile, t])
 
   async function establishRepairDraftSaveBarrier() {
     repairDraftSaveQueueRef.current.invalidate()
@@ -986,6 +1030,41 @@ function App() {
       const hasRepairSession = ['before', 'after', 'middle'].includes(repairSession?.rebuildDirection)
       await establishRepairDraftSaveBarrier()
 
+      routeLegCacheRef.current.clear()
+      let restoredRoutePreview = {
+        status: 'idle',
+        error: '',
+        fingerprint: '',
+        segments: [],
+        geometry: [],
+        distanceMeters: 0,
+      }
+      if (hasRepairSession && repairSession.routePreview) {
+        const restoredAnchor = restoredWorking.points[repairSession.tailAnchorPointIndex] ?? null
+        const restoredControls = buildRepairControlPoints(
+          repairSession.rebuildDirection,
+          restoredAnchor,
+          repairSession.endpoint,
+          repairSession.viaPoints,
+        )
+        const restoredFingerprint = getRoutePreviewFingerprint(
+          restoredControls,
+          repairSession.legModes,
+          routeProfile,
+        )
+        hydrateRouteLegCache(
+          routeLegCacheRef.current,
+          restoredControls,
+          repairSession.legModes,
+          routeProfile,
+          repairSession.routePreview,
+        )
+        restoredRoutePreview = {
+          ...repairSession.routePreview,
+          fingerprint: restoredFingerprint,
+        }
+      }
+
       setSourceTrack(restoredSource)
       setTrack(restoredWorking)
       setShowOriginalTrack(false)
@@ -1000,15 +1079,7 @@ function App() {
       setLegModes(hasRepairSession ? repairSession.legModes ?? {} : {})
       setActiveWaypointId(hasRepairSession ? repairSession.activeWaypointId ?? null : null)
       setMapMode(hasRepairSession ? repairSession.mapMode ?? 'inspect' : 'inspect')
-      setRoutePreview(hasRepairSession && repairSession.routePreview
-        ? repairSession.routePreview
-        : {
-            status: 'idle',
-            error: '',
-            segments: [],
-            geometry: [],
-            distanceMeters: 0,
-          })
+      setRoutePreview(restoredRoutePreview)
       setRepairHistory([])
       setDraftSavedAt(availableDraft.savedAt)
       setDraftSaveError('')
@@ -1213,13 +1284,13 @@ function App() {
     if (
       !track ||
       !middleRepairRange ||
-      effectiveRoutePreview.status !== 'ready' ||
-      effectiveRoutePreview.fingerprint !== routeFingerprint
+      !routeCanBeApplied
     ) {
       setError(t('waitForRoute'))
       return
     }
 
+    const usesDrawnFallback = effectiveRoutePreview.status === 'error'
     const { buildMiddleRepairTrack } = await import('./middleRepair')
     const repairedTrack = buildMiddleRepairTrack(
       track,
@@ -1243,7 +1314,7 @@ function App() {
     setActiveWaypointId(null)
     setMapMode('inspect')
     setError('')
-    setMessage(t('middleApplied'))
+    setMessage(t(usesDrawnFallback ? 'drawnRouteApplied' : 'middleApplied'))
   }
 
   function handleMapClick(latlng) {
@@ -1566,12 +1637,13 @@ function App() {
     if (
       !track ||
       !['before', 'after'].includes(rebuildDirection) ||
-      effectiveRoutePreview.status !== 'ready'
+      !routeCanBeApplied
     ) {
       setError(t('waitForRoute'))
       return
     }
 
+    const usesDrawnFallback = effectiveRoutePreview.status === 'error'
     const repairedTrack = buildExportTrack(
       track,
       removedSegmentSamples,
@@ -1596,7 +1668,7 @@ function App() {
     })
     setTrack(repairedTrack)
     clearRepairSession()
-    setMessage(t('tailApplied'))
+    setMessage(t(usesDrawnFallback ? 'drawnRouteApplied' : 'tailApplied'))
   }
 
   function cancelTailRepair() {
@@ -2221,7 +2293,7 @@ function App() {
                         type="button"
                         className="primary-button"
                         onClick={applyTailRepair}
-                        disabled={effectiveRoutePreview.status !== 'ready'}
+                        disabled={!routeCanBeApplied}
                       >
                         {t('applyTail')}
                       </button>
@@ -2262,7 +2334,7 @@ function App() {
                         type="button"
                         className="primary-button"
                         onClick={applyMiddleRepair}
-                        disabled={effectiveRoutePreview.status !== 'ready'}
+                        disabled={!routeCanBeApplied}
                       >
                         {t('applyMiddle')}
                       </button>
@@ -2277,7 +2349,16 @@ function App() {
                   <div className="note note-neutral">{t('buildingRoute')}</div>
                 ) : null}
                 {effectiveRoutePreview.status === 'error' ? (
-                  <div className="note note-danger">{effectiveRoutePreview.error}</div>
+                  <div className="note note-warning route-retry-note">
+                    <span>{routeFailureMessage}</span>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => setRouteBuildRequest((current) => current + 1)}
+                    >
+                      {t('retryRoute')}
+                    </button>
+                  </div>
                 ) : null}
                 {effectiveRoutePreview.status === 'ready' ? (
                   <div className="note note-good">
@@ -2687,13 +2768,26 @@ function capitalize(value) {
   return value ? `${value[0].toUpperCase()}${value.slice(1)}` : ''
 }
 
-function createWaypoint(latlng, offGrid) {
+function createWaypoint(latlng, manualPoint) {
   return {
     id: `waypoint-${crypto.randomUUID()}`,
     lat: latlng.lat,
     lon: latlng.lng,
-    offGrid,
+    manualPoint,
   }
+}
+
+function buildRepairControlPoints(rebuildDirection, anchorPoint, endpoint, viaPoints = []) {
+  if (!anchorPoint || !endpoint) {
+    return []
+  }
+
+  const anchor = { id: 'anchor', lat: anchorPoint.lat, lon: anchorPoint.lon, kind: 'anchor' }
+  const end = { id: 'endpoint', lat: endpoint.lat, lon: endpoint.lon, kind: 'endpoint' }
+  const waypoints = viaPoints.map((point) => ({ ...point, kind: 'via' }))
+  return rebuildDirection === 'before'
+    ? [end, ...waypoints, anchor]
+    : [anchor, ...waypoints, end]
 }
 
 function resolveInsertIndexFromControlId(controlId, viaPoints, rebuildDirection) {

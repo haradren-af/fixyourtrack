@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   getRoutePreviewFingerprint,
+  isApplicableRoutePreview,
   isCurrentRoutePreview,
 } from '../src/routePreviewState.js'
 
@@ -56,4 +57,25 @@ test('invalidates a ready preview when a leg mode or route profile changes', () 
 
   assert.equal(isCurrentRoutePreview(readyPreview, directFingerprint), false)
   assert.equal(isCurrentRoutePreview(readyPreview, walkingFingerprint), false)
+})
+
+test('allows a current unresolved preview to be applied exactly as drawn', () => {
+  const controls = [start, finish]
+  const fingerprint = getRoutePreviewFingerprint(controls, {}, 'cycling')
+  const preview = {
+    status: 'error',
+    fingerprint,
+    segments: [{
+      id: 'anchor-endpoint',
+      insertAfterId: 'anchor',
+      mode: 'unresolved',
+      geometry: [start, finish],
+      distanceMeters: 450,
+    }],
+    geometry: [start, finish],
+    distanceMeters: 450,
+  }
+
+  assert.equal(isApplicableRoutePreview(preview, fingerprint, controls.length), true)
+  assert.equal(isApplicableRoutePreview(preview, `${fingerprint}-stale`, controls.length), false)
 })

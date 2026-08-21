@@ -19,17 +19,11 @@ export function getRoutingRequestsForControls(controls, profile) {
     }]
   }
 
-  const params = new URLSearchParams({
-    lonlats: controls.map(({ lat, lon }) => `${lon},${lat}`).join('|'),
-    profile: brouterProfiles[profile] ?? brouterProfiles.cycling,
-    alternativeidx: '0',
-    format: 'geojson',
-  })
   const fallbackProfile = profile === 'walking' ? 'routed-foot' : 'routed-bike'
-  return [
+  const requests = [
     {
       provider: 'brouter',
-      url: `https://brouter.de/brouter?${params.toString()}`,
+      url: buildBrouterUrl(controls, brouterProfiles[profile] ?? brouterProfiles.cycling),
     },
     {
       provider: 'osrm',
@@ -37,6 +31,22 @@ export function getRoutingRequestsForControls(controls, profile) {
       minimumIntervalMs: 1000,
     },
   ]
+
+  if (profile === 'cycling') {
+    requests.push(
+      {
+        provider: 'brouter',
+        url: buildBrouterUrl(controls, brouterProfiles.walking),
+      },
+      {
+        provider: 'osrm',
+        url: buildOsrmUrl('https://routing.openstreetmap.de/routed-foot/route/v1/driving', controls),
+        minimumIntervalMs: 1000,
+      },
+    )
+  }
+
+  return requests
 }
 
 export function parseRoutingResponse(data, provider) {
@@ -60,6 +70,16 @@ export function parseRoutingResponse(data, provider) {
 function readFiniteNumber(value) {
   const number = Number(value)
   return Number.isFinite(number) ? number : null
+}
+
+function buildBrouterUrl(controls, profile) {
+  const params = new URLSearchParams({
+    lonlats: controls.map(({ lat, lon }) => `${lon},${lat}`).join('|'),
+    profile,
+    alternativeidx: '0',
+    format: 'geojson',
+  })
+  return `https://brouter.de/brouter?${params.toString()}`
 }
 
 function buildOsrmUrl(baseUrl, controls) {

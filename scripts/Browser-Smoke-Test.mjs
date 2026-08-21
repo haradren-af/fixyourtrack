@@ -375,7 +375,21 @@ try {
   await page.mouse.up()
   await waypointCard.waitFor({ state: 'detached' })
   assert(await waypointCard.count() === 0, 'Dragging a waypoint must not open its details card.')
-  await page.locator('.note-danger').waitFor()
+  const routingFailureNote = page.locator('.route-retry-note')
+  await routingFailureNote.waitFor()
+  const routingFailureText = await routingFailureNote.textContent()
+  assert(
+    /between points \d+ and \d+/i.test(routingFailureText ?? ''),
+    `A routing failure must identify the affected points in user-facing terms: ${routingFailureText}`,
+  )
+  assert(
+    !routingFailureText?.includes('waypoint-'),
+    `A routing failure must not expose internal waypoint identifiers: ${routingFailureText}`,
+  )
+  assert(
+    await page.getByRole('button', { name: 'Apply middle segment' }).isEnabled(),
+    'A complete manually drawn route must remain applicable when road routing fails.',
+  )
   const failedWaypointBounds = await waypointMarker.boundingBox()
   const failedAnchorBounds = await page.locator('.map-pin-anchor').boundingBox()
   assert(failedWaypointBounds && failedAnchorBounds, 'A routing failure must keep every route control visible.')
@@ -387,6 +401,8 @@ try {
   await page.unroute('https://brouter.de/brouter?**')
   await page.unroute('https://routing.openstreetmap.de/**')
   await installRoutingFixture(page)
+  await page.getByRole('button', { name: 'Retry road routing' }).click()
+  await page.locator('.note-good').filter({ hasText: 'Suggested rebuild length' }).waitFor()
 
   await waypointMarker.click()
   await waypointCard.waitFor()
@@ -408,7 +424,33 @@ try {
   await waypointCard.waitFor({ state: 'detached' })
   await page.getByText('Waypoint removed. The joined section now follows mapped roads.', { exact: true }).waitFor()
 
-  await page.locator('.note-good').filter({ hasText: 'Suggested rebuild length' }).waitFor()
+  const readyRepairNote = page.locator('.note-good').filter({ hasText: 'Suggested rebuild length' })
+  await readyRepairNote.waitFor()
+  await page.waitForTimeout(300)
+  await page.unroute('https://brouter.de/brouter?**')
+  let repairResumeRoutingRequests = 0
+  await page.route('https://brouter.de/brouter?**', async (route) => {
+    repairResumeRoutingRequests += 1
+    await route.abort()
+  })
+  await page.route('https://routing.openstreetmap.de/**', async (route) => {
+    repairResumeRoutingRequests += 1
+    await route.abort()
+  })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.getByRole('button', { name: 'Resume draft' }).click()
+  await readyRepairNote.waitFor()
+  assert(
+    await page.getByRole('button', { name: 'Apply middle segment' }).isEnabled(),
+    'A restored ready repair must remain applicable without rebuilding its road geometry online.',
+  )
+  assert(
+    repairResumeRoutingRequests === 0,
+    'Restoring a ready repair must hydrate its saved road legs without contacting a routing provider.',
+  )
+  await page.unroute('https://brouter.de/brouter?**')
+  await page.unroute('https://routing.openstreetmap.de/**')
+  await installRoutingFixture(page)
   await page.getByRole('button', { name: 'Apply middle segment' }).click()
 
   const originalTrackToggle = page.getByRole('button', { name: 'Original', exact: true })
