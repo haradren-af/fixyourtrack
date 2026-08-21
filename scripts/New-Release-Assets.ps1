@@ -19,8 +19,8 @@ $assetNames = @(
 
 $version = (Get-Content -LiteralPath (Join-Path $root "package.json") -Raw | ConvertFrom-Json).version
 $releaseNotesPath = Join-Path $root "RELEASE_NOTES.md"
-$releaseNotes = Get-Content -LiteralPath $releaseNotesPath -Raw
-if ($releaseNotes -notmatch "(?m)^# FixYourTrack $([regex]::Escape($version))$") {
+$releaseNotesHeading = Get-Content -LiteralPath $releaseNotesPath -TotalCount 1
+if ($releaseNotesHeading -ne "# FixYourTrack $version") {
   throw "RELEASE_NOTES.md must have a '# FixYourTrack $version' heading."
 }
 
