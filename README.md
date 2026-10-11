@@ -18,14 +18,20 @@ Testers do not need Node.js, Python, or additional libraries. They extract the c
 ## Main Features
 
 - Import GPX and FIT tracks.
+- Change a track's date and local start or finish time in the left sidebar. All recorded timestamps shift together, preserving duration, pauses, and sensors; midnight crossings remain intact. Undo and saved drafts include this change. Export names retain the imported filename pattern: dated names get the new start date, and a trailing 13-digit Unix timestamp gets the new start timestamp. Undated names receive a date/time suffix. Output remains GPX.
 - Detect suspicious GPS losses and coordinate jumps.
-- Repair middle sections between fixed borders.
+- Repair middle sections between fixed borders. For unflagged GPS drift, use **Select a section to repair**, click its start and end on the track, then **Edit selected section**. The selected section is highlighted; trimming the start or finish has separate controls.
+- Enable **Emergency** at the bottom right of an issue card when recording was switched off. Draw the route through any surviving short recordings. Gaps longer than two minutes (or explicit recording segment breaks) receive route points with estimated timestamps and no invented sensor readings. Gap distance comes from the drawn geometry; existing recordings and wheel-counter increments remain intact. The resulting distance includes estimated sections, and original FIT totals remain as provenance. The mode is saved with the active repair draft, and Undo restores the original recording.
+- Reconstructed rides show an estimated **average over elapsed time**, including stops. Total moving and timer time remain unknown because recording was off. GPX consumers must combine recorded distance with reconstructed edges; see the [emergency statistics contract and example](docs/emergency-repair-statistics-v1.md).
+- Emergency exports carry `fixtrack:excludeFromAverageSpeed=true`. BikeHeatmap excludes these rides from aggregate average-speed calculations while retaining their distance, map, and individual estimated average.
 - Trim and rebuild a damaged start or end.
 - Shape replacement routes using draggable waypoints.
+- Adjust either middle-repair border by dragging it along the recorded track or stepping one GPS point earlier/later. The replacement route recalculates after each move without losing waypoints or their road/direct modes. Borders cannot cross; timestamps and sensors remain unchanged.
 - Trace roads or trails missing from the map.
 - Preserve timestamps, heart rate, speed, cadence, power, altitude, and other recorded sensor values during middle repairs.
-- View speed, heart-rate, and altitude charts.
+- View speed, cadence, heart-rate, and altitude charts. Cadence appears below speed with terrain and light-blue speed backgrounds, plus statistics for the whole track or selected range.
 - Export repaired tracks to GPX.
+- Preserve FIT session distance, elapsed/timer/moving time, speed and original session bounds through drafts and GPX round trips. Coordinate repairs and uniform date shifts retain applicable device statistics; edited recordings use labelled estimates. See the [GPX summary v1 contract and example](docs/fit-session-summary-v1.md).
 - English and Russian interface.
 - Persistent light and dark application themes without changing the map layer.
 - Switch between independent Repair Track and Create Route workspaces.
@@ -35,6 +41,16 @@ Testers do not need Node.js, Python, or additional libraries. They extract the c
 - Export standards-compliant GPX routes without inventing timestamps, speed, heart rate, or other recorded activity data.
 
 ## Development
+
+### Personal trails from BikeHeatmap
+
+The Repair sidebar has a **My trails · BikeHeatmap** panel. Choose **Show my trails**, then **Use for route repairs** to route along recorded rides instead of a public routing service. Purple lines show personal observations; stronger lines have support from multiple rides. Control points must be within 25 m of the network. Missing connections fail explicitly and cannot be applied as a straight-line fallback in this mode. Ordinary cycling/walking routing is still selectable.
+
+**Update from BikeHeatmap** rebuilds the private network from the current local catalog. This integration runs in the local Vite development/preview server; static tester packages do not include the local archive service. The default source is `~/Documents/BikeHeatmap`, overridable with `BIKE_HEATMAP_DATA_DIR`. A manual build is also available with `npm run trails:build -- "path/to/BikeHeatmap"`. Results and an analysis report are stored in the git-ignored `.local-trails/` directory and are not included in the production bundle. Original BikeHeatmap files are only read.
+
+The builder reads active catalog records and original GPX/FIT files, excludes deleted records and non-cycling activity types, breaks GPS jumps and recording gaps, and combines compatible directions within 9 m. Coordinates use a median with equal weight per ride; repeated samples within one ride do not count as independent confirmation. Close parallel paths can still merge, and wide GPS drift can remain separate. This is a personal routing network, not an OSM edit or a guarantee of present-day access. To include new rides, refresh the network from the panel.
+
+Validation against a real local archive: `node scripts/Test-Personal-Trails.mjs` (requires a built network and Microsoft Edge on Windows).
 
 ```bash
 npm install

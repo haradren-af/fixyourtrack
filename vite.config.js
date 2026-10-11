@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { personalTrailsPlugin } from './scripts/Personal-Trails-Plugin.mjs'
 
 const contentSecurityPolicy = "default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.openstreetmap.org https://server.arcgisonline.com; connect-src 'self' https://tile.openstreetmap.org https://server.arcgisonline.com https://router.project-osrm.org https://brouter.de https://routing.openstreetmap.de https://api.open-elevation.com; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 const developmentContentSecurityPolicy = contentSecurityPolicy.replace(
@@ -24,7 +25,7 @@ const developmentSecurityHeaders = {
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), personalTrailsPlugin()],
   server: {
     host: '127.0.0.1',
     port: 4173,

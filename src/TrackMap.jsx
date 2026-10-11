@@ -14,6 +14,7 @@ export default function TrackMap({
   anchorLabel,
   enableWaypointDoubleClickRemove = true,
   endpoint,
+  endpointDraggable,
   endpointLabel,
   fitRequest,
   highlightedTrackPoints,
@@ -23,6 +24,7 @@ export default function TrackMap({
   manualMiddleStartLabel,
   manualMiddleStartPoint,
   mapLayer,
+  personalTrails,
   onAnchorMove,
   onEndpointMove,
   onMapClick,
@@ -61,6 +63,10 @@ export default function TrackMap({
   const suppressMapClickRef = useRef(false)
   const handlersRef = useRef({})
   const [mapReady, setMapReady] = useState(false)
+
+  useEffect(() => {
+    if (mapReady) setSourceData(mapRef.current, 'personal-trails', personalTrails ?? EMPTY_COLLECTION)
+  }, [mapReady, personalTrails])
 
   useEffect(() => {
     routeSegmentsRef.current = routeSegments
@@ -136,8 +142,16 @@ export default function TrackMap({
         return
       }
       const latlng = { lat: event.lngLat.lat, lng: event.lngLat.lng }
-      if (interactionModeRef.current !== 'inspect') {
+      const selectingMiddle = ['pick-middle-start', 'pick-middle-end'].includes(interactionModeRef.current)
+      if (interactionModeRef.current !== 'inspect' && !selectingMiddle) {
         handlersRef.current.onMapClick(latlng)
+        return
+      }
+
+      if (selectingMiddle) {
+        const onTrack = map.queryRenderedFeatures(event.point, { layers: ['track-hitbox'] }).length > 0
+        if (onTrack) handlersRef.current.onTrackClick(latlng)
+        else handlersRef.current.onMapClick(latlng)
         return
       }
 
@@ -306,7 +320,7 @@ export default function TrackMap({
 
     if (selectedCutPoint && !selectedIsManualStart) {
       markersRef.current.push(addMarker(map, selectedCutPoint, {
-        className: 'map-pin-cut',
+        className: manualMiddleStartPoint ? 'map-pin-manual-middle-end' : 'map-pin-cut',
         label: selectedCutPointLabel,
       }))
     }
@@ -322,6 +336,7 @@ export default function TrackMap({
       markersRef.current.push(addMarker(map, anchorPoint, {
         className: 'map-pin-anchor',
         draggable: anchorDraggable,
+        restorePositionOnDrop: rebuildDirection === 'middle',
         label: anchorLabel,
         number: rebuildDirection === 'before' ? viaPoints.length + 2 : 1,
         onMove: anchorDraggable
@@ -333,7 +348,8 @@ export default function TrackMap({
     if (endpoint) {
       markersRef.current.push(addMarker(map, endpoint, {
         className: 'map-pin-endpoint',
-        draggable: rebuildDirection !== 'middle',
+        draggable: endpointDraggable ?? (rebuildDirection !== 'middle'),
+        restorePositionOnDrop: rebuildDirection === 'middle',
         label: endpointLabel,
         number: rebuildDirection === 'before' ? 1 : viaPoints.length + 2,
         onMove: (latlng) => handlersRef.current.onEndpointMove(latlng),
@@ -370,6 +386,7 @@ export default function TrackMap({
     anchorLabel,
     anchorPoint,
     endpoint,
+    endpointDraggable,
     endpointLabel,
     enableWaypointDoubleClickRemove,
     manualMiddleStartLabel,
@@ -525,6 +542,7 @@ function createMapStyle(activeLayer) {
         attribution: 'Tiles &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community',
       },
       'source-track': geoJsonSource(),
+      'personal-trails': geoJsonSource(),
       track: geoJsonSource(),
       suspicious: geoJsonSource(),
       route: geoJsonSource(),
@@ -533,6 +551,14 @@ function createMapStyle(activeLayer) {
     layers: [
       rasterLayer('scheme-base', 'scheme', activeLayer === 'scheme'),
       rasterLayer('satellite-base', 'satellite', activeLayer === 'satellite'),
+      {
+        ...lineLayer('personal-trails-line', 'personal-trails', '#8c44bd', 2, 0.75),
+        paint: {
+          'line-color': '#8c44bd',
+          'line-width': ['case', ['get', 'repeated'], 3, 1.5],
+          'line-opacity': ['case', ['get', 'repeated'], 0.8, 0.3],
+        },
+      },
       {
         ...lineLayer('source-track-line', 'source-track', '#655f5a', 3, 0.58),
         paint: {
@@ -763,6 +789,7 @@ function addMarker(map, point, options) {
     marker.on('dragend', () => {
       suppressClickUntil = Date.now() + 600
       const position = marker.getLngLat()
+      if (options.restorePositionOnDrop) marker.setLngLat([point.lon, point.lat])
       options.onDragEnd?.()
       options.onMove({ lat: position.lat, lng: position.lng })
     })

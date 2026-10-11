@@ -1,6 +1,8 @@
 import { directLegMode, getLegMode } from './routeLegs.js'
 import { shouldUseDirectGeometryFallback } from './routeQuality.js'
 import { getRoutingRequestsForControls, parseRoutingResponse } from './routing.js'
+import { loadPersonalTrails } from './personalTrailStore.js'
+import { routePersonalNetwork } from './personalTrails.js'
 import {
   anchorRouteGeometry,
   getPolylineLength,
@@ -373,6 +375,31 @@ export async function fetchRouteSegments(
   }
   if (typeof fetchImpl !== 'function') {
     throw new Error('Routing is unavailable in this environment.')
+  }
+
+  if (profile === 'personal') {
+    assertBuildCanContinue(signal, deadlineAt)
+    let network
+    try {
+      // The shared network download can outlive this build, but waiting for it
+      // must obey the same deadline and cancellation as online routing.
+      network = await runWithTimeout(() => loadPersonalTrails(fetchImpl), {
+        signal,
+        timeoutMs: Math.max(1, deadlineAt - Date.now()),
+      })
+    }
+    catch (error) {
+      if (!signal?.aborted && error instanceof RoutingRequestTimeoutError) {
+        throw new RouteBuildDeadlineError()
+      }
+      throw error
+    }
+    assertBuildCanContinue(signal, deadlineAt)
+    const segments = controls.slice(0, -1).map((from, index) => routePersonalNetwork(network, from, controls[index + 1], { signal }))
+    if (segments.some((segment) => segment.geometry.length > maxSegmentGeometryPoints) || segments.reduce((sum, segment) => sum + segment.geometry.length, 0) > maxGeometryPoints) {
+      throw new RouteResourceLimitError('Personal route exceeds the geometry limit')
+    }
+    return segments
   }
 
   const requestTimeoutLimit = normalizeLimit(

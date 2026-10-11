@@ -1102,6 +1102,17 @@
   background: rgba(214, 91, 37, 0.1);
 }
 
+.segment-button { position: relative; padding: 0; overflow: hidden; }
+.segment-select { display: grid; gap: 4px; width: 100%; padding: 14px 14px 48px; text-align: left; color: inherit; background: transparent; border: 0; }
+.emergency-switch { position: absolute; bottom: 10px; right: 14px; display: flex; align-items: center; gap: 7px; padding: 2px 0; border: 0; background: transparent; color: inherit; }
+.emergency-switch > span:first-child { font-size: 0.75rem; }
+.switch-track { display: flex; align-items: center; width: 30px; height: 18px; padding: 2px; border-radius: 12px; background: #8b9694; }
+.switch-track > span { width: 14px; height: 14px; border-radius: 50%; background: white; }
+.emergency-switch[aria-checked="true"] .switch-track { background: #be4b18; }
+.emergency-switch[aria-checked="true"] .switch-track > span { margin-left: auto; }
+.emergency-switch:disabled { opacity: 0.45; cursor: default; }
+.emergency-note { display: grid; gap: 8px; }
+
 .waypoint-list-button {
   grid-template-columns: 32px minmax(0, 1fr);
   align-items: center;
@@ -1206,6 +1217,17 @@
   border-color: rgba(201, 72, 34, 0.18);
   color: #8d2d0f;
 }
+
+.manual-repair-guide { margin-top: 0; padding-top: 0; border-top: 0; }
+.repair-border-controls { display: grid; gap: 12px; padding: 12px; border: 1px solid rgba(100, 125, 116, 0.3); border-radius: 4px; }
+.repair-border-controls p { margin: 0; }
+.repair-border-row { display: grid; gap: 6px; }
+.repair-border-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.manual-repair-steps { padding-left: 22px; color: var(--muted); display: grid; gap: 8px; }
+.manual-repair-steps .step-current { color: var(--text); font-weight: 700; }
+.manual-repair-steps .step-complete { color: var(--text); }
+.trim-track-details { margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(22, 43, 40, 0.1); }
+.trim-track-details summary { cursor: pointer; font-weight: 600; }
 
 .route-retry-note {
   display: grid;
@@ -1493,6 +1515,28 @@
   opacity: 0.5;
 }
 
+.chart-speed-background { opacity: 0.7; }
+.chart-background-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 11px; margin-bottom: 8px; color: var(--muted); }
+.chart-background-legend > span { display: inline-flex; align-items: center; gap: 5px; }
+.chart-background-legend button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.chart-background-legend button[aria-pressed="false"] { opacity: 0.45; text-decoration: line-through; }
+.chart-main-legend { font-weight: 700; }
+.chart-cadence-line { stroke-width: 1.15; }
+[data-chart="cadence"] .chart-altitude-background { opacity: 0.65; }
+[data-chart="cadence"] .chart-speed-background { opacity: 0.85; }
+[data-chart="cadence"] .chart-speed-background .chart-line { stroke-width: 1.5; }
+
 .chart-endpoint-marker circle {
   fill: #4e7117;
   stroke: #fbfaf6;
@@ -1615,8 +1659,8 @@
   position: absolute;
   z-index: 600;
   top: 14px;
-  left: 14px;
-  right: 14px;
+  left: 58px;
+  right: 190px;
   padding: 12px 14px;
   border-radius: 4px;
   background: rgba(28, 93, 84, 0.94);
@@ -2371,8 +2415,10 @@
     grid-template-columns: 1fr;
   }
 
+  .map-mode-banner,
   .create-map-panel .map-mode-banner {
     top: 68px;
+    left: 14px;
     right: 14px;
   }
 
@@ -2467,3 +2513,20 @@
     flex: 1 1 auto;
   }
 }
+.track-time-fields {
+  display: grid;
+  gap: 12px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.map-pin-manual-middle-end { width: 18px; height: 18px; background: #d65b25; }
+
+.track-time-fields legend { margin-bottom: 10px; }
+.track-time-fields > label { display: grid; gap: 6px; }
+.track-time-fields input { min-width: 0; color-scheme: dark light; }
+.track-time-options { display: flex; gap: 20px; flex-wrap: wrap; }
+.track-time-options label { display: flex; align-items: center; gap: 6px; }
+.track-time-options input { width: auto; margin: 0; }

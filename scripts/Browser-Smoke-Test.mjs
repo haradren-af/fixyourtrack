@@ -201,6 +201,7 @@ try {
   })
   assert(projectDialogContrast >= 4.5, 'The portalled Projects dialog must keep readable contrast in dark mode.')
   assert(await page.locator('.hero').getAttribute('inert') !== null, 'The editor background must be inert while Projects is open.')
+  await projectDialog.getByRole('searchbox').and(page.locator(':focus')).waitFor()
   assert(
     await projectDialog.getByRole('searchbox').evaluate((element) => document.activeElement === element),
     'Opening Projects must focus its search field.',
@@ -671,6 +672,160 @@ try {
   )
   await unavailableDraftContext.close()
 
+  const timeContext = await browser.newContext({ timezoneId: 'Europe/Moscow', viewport: { width: 1440, height: 1000 } })
+  const timePage = await timeContext.newPage()
+  timePage.on('pageerror', (error) => clientErrors.push(error.message))
+  await installMapTileFixture(timePage)
+  await timePage.addInitScript(() => window.localStorage.setItem('fixyourtrack-language', 'ru'))
+  await timePage.goto(url)
+  await timePage.locator('input[type="file"]').setInputFiles({
+    name: 'MAGENE_C606_2025-07-15_50574475_1789115290940.gpx',
+    mimeType: 'application/gpx+xml',
+    buffer: fs.readFileSync(fixturePath),
+  })
+  const timePanel = timePage.locator('.track-time-panel')
+  await timePanel.getByLabel('Дата', { exact: true }).fill('2026-09-11')
+  await timePanel.getByLabel('Время', { exact: true }).fill('23:59:30')
+  await timePanel.getByRole('button', { name: 'Применить дату и время' }).click()
+  const startEpoch = Date.parse('2026-09-11T23:59:30+03:00')
+  const expectedName = `MAGENE_C606_2026-09-11_50574475_${startEpoch}`
+  await timePage.getByText(expectedName, { exact: true }).waitFor()
+  await timePanel.getByLabel('Окончания', { exact: true }).check()
+  const finishTime = await timePanel.getByLabel('Время', { exact: true }).inputValue()
+  assert(finishTime !== '23:59:30', 'Finish selector must show the shifted finish timestamp.')
+  await timePanel.getByLabel('Дата', { exact: true }).fill('2026-09-13')
+  await timePanel.getByLabel('Время', { exact: true }).fill('00:01:00')
+  await timePanel.getByRole('button', { name: 'Применить дату и время' }).click()
+  await timePage.getByRole('button', { name: 'Отменить последнее изменение', exact: true }).first().click()
+  await timePage.getByText(expectedName, { exact: true }).waitFor()
+  const timeDownloadPromise = timePage.waitForEvent('download')
+  await timePage.locator('.hero-export-action').click()
+  const timeDownload = await timeDownloadPromise
+  assert(timeDownload.suggestedFilename() === `${expectedName}.gpx`, 'Export must use the updated imported filename pattern.')
+  const exportedTimeXml = fs.readFileSync(await timeDownload.path(), 'utf8')
+  assert(exportedTimeXml.includes('2026-09-11T20:59:30.000Z'), 'GPX must contain the new UTC start time.')
+  assert(exportedTimeXml.includes('<gpxtpx:hr>125</gpxtpx:hr>'), 'Time changes must retain sensor data.')
+  await timePage.waitForFunction(() => document.querySelector('.draft-saved'))
+  await timePage.reload()
+  await timePage.getByRole('button', { name: 'Продолжить черновик', exact: true }).click()
+  await timePage.getByText(expectedName, { exact: true }).waitFor()
+  await timePanel.scrollIntoViewIfNeeded()
+  await timePage.screenshot({ path: path.join(root, 'artifacts', 'track-time-panel.png') })
+  await timeContext.close()
+
+  const cadenceContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
+  const cadencePage = await cadenceContext.newPage()
+  cadencePage.on('pageerror', (error) => clientErrors.push(error.message))
+  await installMapTileFixture(cadencePage)
+  await cadencePage.addInitScript(() => window.localStorage.setItem('fixyourtrack-language', 'ru'))
+  await cadencePage.goto(url)
+  const cadenceXml = `<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v2"><trk><name>Dense cadence</name><trkseg>${Array.from({ length: 1600 }, (_, index) => {
+    const cadence = index % 13 < 2 || index % 101 < 12 ? 0 : Math.round(80 + 8 * Math.sin(index / 37) + 5 * Math.sin(index * 2))
+    return `<trkpt lat="${55 + index / 100000}" lon="${37 + index / 100000}"><ele>${70 + 40 * Math.sin(index / 140)}</ele><time>${new Date(Date.UTC(2026, 8, 11) + index * 3000).toISOString()}</time><extensions><gpxtpx:TrackPointExtension><gpxtpx:cad>${cadence}</gpxtpx:cad><gpxtpx:hr>125</gpxtpx:hr><gpxtpx:speed>${5 + 2 * Math.sin(index / 65)}</gpxtpx:speed></gpxtpx:TrackPointExtension></extensions></trkpt>`
+  }).join('')}</trkseg></trk></gpx>`
+  await cadencePage.locator('input[type="file"]').setInputFiles({ name: 'cadence.gpx', mimeType: 'application/gpx+xml', buffer: Buffer.from(cadenceXml) })
+  const cadenceChart = cadencePage.locator('[data-chart="cadence"]')
+  await cadenceChart.waitFor()
+  assert((await cadencePage.locator('.profile-chart').evaluateAll((charts) => charts.map((chart) => chart.dataset.chart))).join(',') === 'altitude,speed,cadence,heartRate', 'Cadence must follow speed.')
+  assert(await cadenceChart.locator('.chart-altitude-background path').count() === 2, 'Cadence must include terrain background.')
+  assert(await cadenceChart.locator('.chart-speed-background .chart-line').getAttribute('stroke') === '#38bdf8', 'Speed background must be light blue.')
+  assert(await cadencePage.locator('[data-chart="speed"] svg > .chart-line').getAttribute('stroke') === '#d65b25', 'Main speed chart must keep its original orange palette.')
+  assert(await cadenceChart.locator('.chart-cadence-line').getAttribute('stroke') === '#d65b25', 'Cadence must use the original speed palette.')
+  assert(await cadenceChart.locator('svg > path').count() === 1, 'Cadence must have no area fill obscuring backgrounds.')
+  const speedLayerToggle = cadenceChart.getByRole('button', { name: 'Скорость', exact: true })
+  await speedLayerToggle.click()
+  assert(await cadenceChart.locator('.chart-speed-background').count() === 0, 'Speed background can be hidden independently.')
+  assert(await speedLayerToggle.getAttribute('aria-pressed') === 'false', 'Hidden layer must be indicated accessibly.')
+  await speedLayerToggle.click()
+  assert(await cadenceChart.getByText('0 rpm', { exact: true }).count() === 1, 'Zero cadence must be included in statistics.')
+  const pedalingCadences = Array.from({ length: 1600 }, (_, index) => (
+    index % 13 < 2 || index % 101 < 12 ? 0 : Math.round(80 + 8 * Math.sin(index / 37) + 5 * Math.sin(index * 2))
+  )).filter((cadence) => cadence > 0)
+  const expectedAverageCadence = Math.round(pedalingCadences.reduce((total, cadence) => total + cadence, 0) / pedalingCadences.length)
+  assert(await cadenceChart.locator('.chart-stat').filter({ hasText: 'Средний каденс' }).locator('strong').textContent() === `${expectedAverageCadence} rpm`, 'Average cadence must exclude coasting zeros.')
+  for (const axis of ['Время', 'Расстояние']) {
+    await cadencePage.getByRole('button', { name: axis, exact: true }).click()
+    await cadenceChart.scrollIntoViewIfNeeded()
+    const svg = cadenceChart.locator('svg')
+    assert(!(await svg.locator('path').evaluateAll((paths) => paths.some((item) => /NaN|Infinity/.test(item.getAttribute('d'))))), 'Chart paths must be finite on both axes.')
+    const bounds = await svg.boundingBox()
+    await cadencePage.mouse.move(bounds.x + bounds.width * 0.35, bounds.y + bounds.height * 0.5)
+    await cadencePage.mouse.down()
+    await cadencePage.mouse.move(bounds.x + bounds.width * 0.7, bounds.y + bounds.height * 0.5, { steps: 5 })
+    await cadencePage.mouse.up()
+    assert(await cadencePage.locator('.chart-selection').count() === 4, 'Cadence selection must synchronize all charts.')
+    await svg.click()
+  }
+  await cadenceChart.screenshot({ path: path.join(root, 'artifacts', 'cadence-chart.png') })
+  await cadencePage.locator('.sidebar-resizer').press('End')
+  await cadenceChart.screenshot({ path: path.join(root, 'artifacts', 'cadence-chart-wide.png') })
+  await cadenceContext.close()
+
+  const distanceContext = await browser.newContext()
+  const distancePage = await distanceContext.newPage()
+  distancePage.on('pageerror', (error) => clientErrors.push(error.message))
+  await installMapTileFixture(distancePage)
+  await distancePage.addInitScript(() => window.localStorage.setItem('fixyourtrack-language', 'en'))
+  await distancePage.goto(url)
+  const distanceXml = `<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1" xmlns:fixtrack="https://fixyourtrack.local/extensions/v1"><trk><name>GPS gaps with odometer</name><trkseg>${[
+    { distance: 0 },
+    { distance: 1272.18 },
+    { distance: 1282.31, lat: 56.3, lon: 38.13 },
+    { distance: 12000 },
+    { distance: 16778.22, lat: 56.31, lon: 38.14 },
+  ].map((point, index) => `<trkpt${point.lat ? ` lat="${point.lat}" lon="${point.lon}"` : ''}><time>${new Date(Date.UTC(2026, 9, 9) + index * 1000).toISOString()}</time><extensions><fixtrack:distance>${point.distance}</fixtrack:distance></extensions></trkpt>`).join('')}</trkseg></trk></gpx>`
+  await distancePage.locator('input[type="file"]').setInputFiles({ name: 'distance-gaps.gpx', mimeType: 'application/gpx+xml', buffer: Buffer.from(distanceXml) })
+  const distanceValue = distancePage.locator('.stats-grid > div').filter({ hasText: 'Distance' }).locator('dd')
+  await distanceValue.waitFor()
+  assert(await distanceValue.textContent() === '16.78 km', 'Track distance must retain odometer movement through missing GPS samples.')
+  await distancePage.locator('.draft-saved').waitFor()
+  await distancePage.reload()
+  await distancePage.getByRole('button', { name: 'Resume draft', exact: true }).click()
+  await distanceValue.waitFor()
+  assert(await distanceValue.textContent() === '16.78 km', 'Recorded distance must survive saved-draft reload.')
+  await distanceContext.close()
+
+  const summaryContext = await browser.newContext()
+  const summaryPage = await summaryContext.newPage()
+  summaryPage.on('pageerror', (error) => clientErrors.push(error.message))
+  await installMapTileFixture(summaryPage)
+  await summaryPage.addInitScript(() => window.localStorage.setItem('fixyourtrack-language', 'en'))
+  await summaryPage.goto(url)
+  await summaryPage.locator('input[type="file"]').setInputFiles(path.join(root, 'docs', 'examples', 'fit-session-summary-v1.gpx'))
+  const summarySpeed = summaryPage.locator('[data-chart="speed"]')
+  await summarySpeed.waitFor()
+  assert(await summarySpeed.locator('.chart-stat').filter({ hasText: 'Average speed' }).locator('strong').textContent() === '37.4 km/h', 'Imported GPX must prefer the recorded FIT average.')
+  assert(await summarySpeed.locator('.chart-stat').filter({ hasText: 'Moving time' }).locator('strong').textContent() === '00:00:19', 'GPX must retain FIT moving time.')
+  assert(await summarySpeed.locator('.chart-stat').filter({ hasText: 'Timer time' }).locator('strong').textContent() === '00:00:21', 'Timer time must remain separate from movement.')
+  await summaryPage.locator('.draft-saved').waitFor()
+  await summaryPage.reload()
+  await summaryPage.getByRole('button', { name: 'Resume draft', exact: true }).click()
+  await summarySpeed.waitFor()
+  assert(await summarySpeed.locator('.chart-stat').filter({ hasText: 'Average speed' }).locator('strong').textContent() === '37.4 km/h', 'Draft serialization must retain the original FIT session summary.')
+  await summaryContext.close()
+
+  const emergencyContext = await browser.newContext()
+  const emergencyPage = await emergencyContext.newPage()
+  emergencyPage.on('pageerror', (error) => clientErrors.push(error.message))
+  await installMapTileFixture(emergencyPage)
+  await emergencyPage.addInitScript(() => window.localStorage.setItem('fixyourtrack-language', 'en'))
+  await emergencyPage.goto(url)
+  await emergencyPage.locator('input[type="file"]').setInputFiles(path.join(root, 'docs', 'examples', 'emergency-repair-v1.gpx'))
+  const emergencySpeed = emergencyPage.locator('[data-chart="speed"]')
+  await emergencySpeed.waitFor()
+  assert(await emergencySpeed.locator('.chart-stat').filter({ hasText: 'Average over elapsed time' }).locator('strong').textContent() === '≈ 1.8 km/h', 'Emergency average must explicitly use elapsed time, including stops.')
+  assert(await emergencySpeed.locator('.chart-stat').filter({ hasText: 'Moving time' }).locator('strong').textContent() === '--', 'Interpolated timestamps must not invent moving time.')
+  assert(await emergencySpeed.getByText('Timer time', { exact: true }).count() === 0, 'The old partial FIT timer must not describe the recovered ride.')
+  assert(await emergencyPage.locator('.stats-grid > div').filter({ hasText: 'Distance' }).locator('dd').textContent() === '2.32 km', 'Recovered geometry and the FIT baseline must both survive GPX import.')
+  await emergencyPage.locator('.language-picker select').selectOption('ru')
+  assert(await emergencySpeed.getByText('Средняя за всё время', { exact: true }).isVisible(), 'Russian UI must distinguish elapsed average from moving average.')
+  assert((await emergencySpeed.locator('.chart-hint').last().textContent()).includes('включая остановки'), 'Recovered statistics must explain uncertainty in stops.')
+  const emergencyDownload = emergencyPage.waitForEvent('download')
+  await emergencyPage.getByRole('button', { name: 'Экспортировать исправленный GPX', exact: true }).click()
+  const emergencyExportPath = await (await emergencyDownload).path()
+  assert(fs.readFileSync(emergencyExportPath, 'utf8').includes('<fixtrack:excludeFromAverageSpeed>true</fixtrack:excludeFromAverageSpeed>'), 'Emergency GPX export must carry the exclusion policy for aggregate averages.')
+  await emergencyContext.close()
+
   assert(
     clientErrors.length === 0,
     `Browser workflow reported client errors:\n${clientErrors.slice(0, 20).join('\n')}`,
@@ -988,8 +1143,9 @@ async function installMapTileFixture(page) {
     contentType: 'image/png',
     body: transparentPng,
   })
-  await page.route('https://tile.openstreetmap.org/**', fulfillTile)
-  await page.route('https://server.arcgisonline.com/**', fulfillTile)
+  // Map workers can issue requests outside the page's own routing scope.
+  await page.context().route('https://tile.openstreetmap.org/**', fulfillTile)
+  await page.context().route('https://server.arcgisonline.com/**', fulfillTile)
 }
 
 async function waitForRouteDraftLockRelease(page) {

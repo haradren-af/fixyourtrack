@@ -1,4 +1,5 @@
 import { normalizeLegModes } from './routeLegs.js'
+import { normalizeFitSummary } from './fitSummary.js'
 import {
   projectDatabaseName as databaseName,
   projectDatabaseVersion,
@@ -11,8 +12,8 @@ const currentSchemaVersion = 3
 const maximumStoredSamples = 1_000_000
 const maximumStoredWaypoints = 2000
 const numericSampleFields = ['lat', 'lon', 'ele', 'speed', 'distance', 'heartRate', 'cadence', 'power', 'temperature']
-const storedSampleFields = new Set([...numericSampleFields, 'time', 'segmentStart', 'repairAccepted'])
-const storedTrackFields = new Set(['name', 'format', 'samples'])
+const storedSampleFields = new Set([...numericSampleFields, 'time', 'segmentStart', 'repairAccepted', 'emergencyRepair', 'reconstructed', 'routeDistance'])
+const storedTrackFields = new Set(['name', 'format', 'samples', 'originalFilename', 'recordedAverageCadence', 'fitSummary', 'excludeFromAverageSpeed'])
 
 export async function loadRepairDraft() {
   try {
@@ -202,12 +203,18 @@ function serializeTrack(track) {
   assertTrackCanBeSaved(track)
   return {
     name: track.name,
+    ...(typeof track.originalFilename === 'string' ? { originalFilename: track.originalFilename } : {}),
+    ...(Number.isFinite(track.recordedAverageCadence) ? { recordedAverageCadence: track.recordedAverageCadence } : {}),
+    ...(track.fitSummary ? { fitSummary: normalizeFitSummary(track.fitSummary) } : {}),
+    ...(track.excludeFromAverageSpeed === true ? { excludeFromAverageSpeed: true } : {}),
     format: track.format,
     samples: track.samples.map(normalizeSample).filter(Boolean),
   }
 }
 
 export function assertTrackCanBeSaved(track) {
+  if (track?.excludeFromAverageSpeed !== undefined && typeof track.excludeFromAverageSpeed !== 'boolean') throw new Error('The average-speed exclusion marker is invalid.')
+  if (track?.fitSummary != null && !normalizeFitSummary(track.fitSummary)) throw new Error('The FIT session summary is invalid.')
   if (!Array.isArray(track?.samples)) {
     throw new Error('The repair draft does not contain a valid sample list.')
   }
@@ -245,6 +252,10 @@ function normalizeSerializedTrack(track) {
     Object.keys(track).some((field) => !storedTrackFields.has(field)) ||
     typeof track.name !== 'string' ||
     !track.name.trim() ||
+    (track.originalFilename !== undefined && (typeof track.originalFilename !== 'string' || track.originalFilename.length > 1024)) ||
+    (track.recordedAverageCadence !== undefined && (!Number.isFinite(track.recordedAverageCadence) || track.recordedAverageCadence < 0)) ||
+    (track.fitSummary != null && !normalizeFitSummary(track.fitSummary)) ||
+    (track.excludeFromAverageSpeed !== undefined && typeof track.excludeFromAverageSpeed !== 'boolean') ||
     !['gpx', 'fit'].includes(track.format) ||
     !Array.isArray(track.samples) ||
     track.samples.length < 2 ||
@@ -260,6 +271,10 @@ function normalizeSerializedTrack(track) {
 
   return {
     name: track.name,
+    ...(typeof track.originalFilename === 'string' ? { originalFilename: track.originalFilename } : {}),
+    ...(Number.isFinite(track.recordedAverageCadence) ? { recordedAverageCadence: track.recordedAverageCadence } : {}),
+    ...(track.fitSummary ? { fitSummary: normalizeFitSummary(track.fitSummary) } : {}),
+    ...(track.excludeFromAverageSpeed === true ? { excludeFromAverageSpeed: true } : {}),
     format: track.format,
     samples,
   }
@@ -278,7 +293,7 @@ function normalizeStoredSample(sample) {
       typeof sample.time !== 'string' || sample.time.length > 100
     )) ||
     (sample.segmentStart !== undefined && typeof sample.segmentStart !== 'boolean') ||
-    (sample.repairAccepted !== undefined && typeof sample.repairAccepted !== 'boolean')
+    ['repairAccepted', 'emergencyRepair', 'reconstructed', 'routeDistance'].some(field => sample[field] !== undefined && typeof sample[field] !== 'boolean')
   ) {
     return null
   }
@@ -462,13 +477,17 @@ function normalizeMiddleRange(range, sampleCount) {
     !Number.isInteger(range.endSampleIndex) ||
     range.startSampleIndex < 0 ||
     range.endSampleIndex <= range.startSampleIndex ||
-    range.endSampleIndex >= sampleCount
+    range.endSampleIndex >= sampleCount ||
+    (range.emergency !== undefined && typeof range.emergency !== 'boolean') ||
+    (range.issueId !== undefined && (typeof range.issueId !== 'string' || !/^\d+-\d+$/.test(range.issueId)))
   ) {
     return null
   }
   return {
     startSampleIndex: range.startSampleIndex,
     endSampleIndex: range.endSampleIndex,
+    ...(range.emergency !== undefined ? { emergency: range.emergency } : {}),
+    ...(range.issueId !== undefined ? { issueId: range.issueId } : {}),
   }
 }
 
@@ -583,6 +602,9 @@ function normalizeSample(sample) {
   normalized.segmentStart = Boolean(sample.segmentStart)
   if (sample.repairAccepted) {
     normalized.repairAccepted = true
+  }
+  for (const field of ['emergencyRepair', 'reconstructed', 'routeDistance']) {
+    if (sample[field]) normalized[field] = true
   }
   return normalized
 }

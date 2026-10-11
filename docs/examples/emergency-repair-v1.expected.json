@@ -1,0 +1,22 @@
+{
+  "statistics": {
+    "distanceMeters": 2323.999757540787,
+    "movingSeconds": null,
+    "timerSeconds": null,
+    "elapsedSeconds": 4610,
+    "averageSpeedMps": 0.5041214224600405,
+    "averageSpeedBasis": "elapsed",
+    "startTime": "2026-01-01T00:00:00.000Z",
+    "endTime": "2026-01-01T01:16:50.000Z",
+    "sources": {
+      "distance": "estimate",
+      "movingTime": "unavailable",
+      "timerTime": "unavailable",
+      "elapsedTime": "estimate",
+      "averageSpeed": "estimate"
+    }
+  },
+  "sampleCount": 83,
+  "reconstructedSampleCount": 77,
+  "distanceToleranceMeters": 0.1
+}

@@ -10,7 +10,10 @@ import {
   shouldProtectRepairDraft,
 } from './draftStore'
 import { sanitizeFilename } from './filename'
+import TrackTimePanel from './TrackTimePanel'
+import PersonalTrailsPanel from './PersonalTrailsPanel'
 import { parseGpxDocument } from './gpx'
+import { createFitSummary } from './fitSummary'
 import { translate } from './i18n'
 import {
   directLegMode,
@@ -32,7 +35,9 @@ import {
   isApplicableRoutePreview,
   isCurrentRoutePreview,
 } from './routePreviewState'
-import { getRouteControlSnapUpdates } from './routeSnapping'
+import { applyRouteControlSnapUpdates, getRouteControlSnapUpdates } from './routeSnapping'
+import { moveRepairBorder, repairRangeAtPoint } from './repairBorders'
+import { buildEmergencyRepairTrack, getEmergencyLegModes, getEmergencyRecordingAnchors } from './emergencyRepair'
 import { readLocalPreference, writeLocalPreference } from './storage'
 import { getSuspiciousSegments } from './trackDetection'
 import {
@@ -73,9 +78,9 @@ const instructionContent = {
         title: 'Если плохой участок в середине',
         steps: [
           'Если участок есть в очереди, выберите проблему или нажмите “Исправить следующую проблему”.',
-          'Если очередь не нашла нужный кусок, кликните первую удобную границу на треке и нажмите “Использовать выбранную точку как первую границу”.',
-          'Кликните вторую границу на треке и нажмите “Исправить участок между выбранными границами”.',
-          'Приложение зафиксирует границы повреждённого участка и покажет синюю замену.',
+          'Если очередь не нашла нужный кусок, в блоке “Исправить участок вручную” нажмите “Выбрать участок для исправления”.',
+          'Кликните начало и конец участка на треке, затем нажмите “Редактировать выбранный участок”.',
+          'Приложение покажет синюю замену. Перетаскивайте начальную и конечную границы по записанному треку, чтобы подобрать плавные стыки; для точной подгонки есть шаг в одну точку.',
           'Кликните по синей линии, чтобы добавить точку. Перетащите точку туда, где реально проходил маршрут.',
           'Добавляйте столько точек, сколько нужно. Точки нумеруются по порядку маршрута.',
           'Если GPS начал плыть чуть раньше или позже, используйте “Захватить более ранний дрейф GPS” или “Захватить более поздний дрейф GPS”.',
@@ -116,7 +121,7 @@ const instructionContent = {
         steps: [
           'Если начало трека полностью отсутствует в файле, приложение пока не может создать полноценный новый старт.',
           'Причина: в файле нет записей времени, скорости, пульса, мощности и дистанции для отсутствующего участка.',
-          'Если GPS-точки плохие, но записи в файле есть, такой участок можно заменить. Если записей вообще нет, сейчас можно только продолжить работу с имеющейся частью трека.',
+          'Для промежутков с выключенной записью включите «Аварийный» в карточке проблемы. Нарисуйте маршрут через сохранившиеся фрагменты: дистанция пропусков считается по маршруту, время расчётное, показания датчиков не создаются.',
         ],
       },
     ],
@@ -141,9 +146,9 @@ const instructionContent = {
         title: 'If the bad section is in the middle',
         steps: [
           'If the section appears in the queue, select it or click “Repair next issue”.',
-          'If the queue missed it, click the first convenient border on the track and click “Use selected point as first border”.',
-          'Click the second border on the track and click “Repair between selected borders”.',
-          'The app fixes the damaged-section borders and shows a blue replacement.',
+          'If the queue missed it, click “Select a section to repair” in “Repair a section manually”.',
+          'Click the start and end on the track, then click “Edit selected section”.',
+          'The app shows a blue replacement. Drag either border along the recorded track to find a smooth join, or step one recorded point at a time for fine adjustment.',
           'Click the blue line to add a point. Drag the point to where the real route went.',
           'Add as many points as needed. Points are numbered in route order.',
           'If GPS started drifting slightly earlier or later, use “Include earlier GPS drift” or “Include later GPS drift”.',
@@ -184,7 +189,7 @@ const instructionContent = {
         steps: [
           'If the track start is completely absent from the file, the app cannot yet create a full new start.',
           'Reason: the file has no time, speed, heart-rate, power, or distance records for that missing section.',
-          'If GPS positions are wrong but records still exist, that section can be replaced. If records do not exist at all, only the existing recorded part can be repaired right now.',
+          'For gaps with recording switched off, enable “Emergency” on the issue card. Draw a route through the surviving recordings: gap distance comes from the route, time is estimated, and sensor readings are not generated.',
         ],
       },
     ],
@@ -201,6 +206,7 @@ function App() {
   const [createHydrationStatus, setCreateHydrationStatus] = useState('loading')
   const [track, setTrack] = useState(null)
   const [sourceTrack, setSourceTrack] = useState(null)
+  const [personalTrails, setPersonalTrails] = useState(null)
   const [selectedCutPointIndex, setSelectedCutPointIndex] = useState(null)
   const [manualMiddleStartIndex, setManualMiddleStartIndex] = useState(null)
   const [tailAnchorPointIndex, setTailAnchorPointIndex] = useState(null)
@@ -360,7 +366,7 @@ function App() {
         }
   ), [controlPoints.length, endpoint, routeFingerprint, routePreview])
 
-  const routeCanBeApplied = isApplicableRoutePreview(
+  const routeCanBeApplied = (routeProfile !== 'personal' || effectiveRoutePreview.status === 'ready') && isApplicableRoutePreview(
     effectiveRoutePreview,
     routeFingerprint,
     controlPoints.length,
@@ -498,6 +504,18 @@ function App() {
       largeDetour: differencePercent !== null && differencePercent > 80,
     }
   }, [effectiveRoutePreview, removedSegmentSamples, routeCanBeApplied])
+
+  const emergencyPreview = useMemo(() => {
+    if (!middleRepairRange?.emergency || !track || !routeCanBeApplied) return null
+    try {
+      const reconstructed = buildEmergencyRepairTrack(track, effectiveRoutePreview.geometry, middleRepairRange)
+      const extraSamples = reconstructed.samples.length - track.samples.length
+      const geometry = reconstructed.samples.slice(middleRepairRange.startSampleIndex, middleRepairRange.endSampleIndex + extraSamples + 1).filter(isValidCoordinate)
+      return { track: reconstructed, distanceMeters: getPolylineLength(geometry) }
+    } catch (failure) {
+      return { error: failure.message }
+    }
+  }, [middleRepairRange, track, routeCanBeApplied, effectiveRoutePreview.geometry])
 
   const completedRepairs = useMemo(
     () => countAcceptedRepairGroups(track?.samples ?? []),
@@ -707,6 +725,14 @@ function App() {
             { fixedControlIds },
           )
           if (snapUpdates.length) {
+            const snapped = applyRouteControlSnapUpdates(controlPoints, nextPreview, snapUpdates)
+            hydrateRouteLegCache(
+              routeLegCacheRef.current,
+              snapped.controls,
+              legModes,
+              routeProfile,
+              snapped.preview,
+            )
             const updatesById = new Map(snapUpdates.map((point) => [point.id, point]))
             const endpointUpdate = updatesById.get('endpoint')
             if (endpointUpdate) {
@@ -783,7 +809,7 @@ function App() {
       setIsLoadingTrack(true)
       setError('')
       setMessage(t('readingFile', { file: file.name }))
-      const loadedTrack = await loadTrack(file)
+      const loadedTrack = { ...await loadTrack(file), originalFilename: file.name }
       const isExplicitReplacement = hadTrack || replacesPersistedDraft
       if (isExplicitReplacement) {
         await establishRepairDraftSaveBarrier()
@@ -1142,6 +1168,8 @@ function App() {
     setMiddleRepairRange({
       startSampleIndex: startPoint.sampleIndex,
       endSampleIndex: endPoint.sampleIndex,
+      ...(segment.id ? { issueId: segment.id } : {}),
+      emergency: Boolean(segment.emergency),
     })
     setEndpoint({ lat: endPoint.lat, lon: endPoint.lon })
     setViaPoints([])
@@ -1153,14 +1181,17 @@ function App() {
     return true
   }
 
-  function setManualMiddleStartFromCutPoint() {
-    if (selectedCutPointIndex === null) {
-      setMessage(t('clickCloser'))
+  function startManualMiddleSelection() {
+    if (!track || rebuildDirection) {
+      setError(t('finishCurrentRepair'))
       return
     }
-
-    setManualMiddleStartIndex(selectedCutPointIndex)
-    setMessage(t('manualMiddleStartSelected', { point: selectedCutPointIndex + 1 }))
+    setManualMiddleStartIndex(null)
+    setSelectedCutPointIndex(null)
+    setMapMode('pick-middle-start')
+    setCollapsedPanels((current) => ({ ...current, track: false }))
+    setError('')
+    setMessage(t('manualPickStart'))
   }
 
   function beginManualMiddleRepair() {
@@ -1178,11 +1209,16 @@ function App() {
     const endIndex = Math.max(manualMiddleStartIndex, selectedCutPointIndex)
     if (beginMiddleRepair({ startIndex, endIndex }, 'manualMiddleActive')) {
       setManualMiddleStartIndex(null)
+      setCollapsedPanels((current) => ({ ...current, rebuild: false, waypoints: false }))
+      requestAnimationFrame(() => document.querySelector('.repair-route-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
     }
   }
 
   function cancelManualMiddleSelection() {
     setManualMiddleStartIndex(null)
+    setSelectedCutPointIndex(null)
+    setMapMode('inspect')
+    setError('')
     setMessage(t('manualMiddleCancelled'))
   }
 
@@ -1292,15 +1328,20 @@ function App() {
 
     const usesDrawnFallback = effectiveRoutePreview.status === 'error'
     const { buildMiddleRepairTrack } = await import('./middleRepair')
-    const repairedTrack = buildMiddleRepairTrack(
+    if (middleRepairRange.emergency && !emergencyPreview?.track) {
+      setError(t(emergencyPreview?.error || 'waitForRoute'))
+      return
+    }
+    const repairedTrack = middleRepairRange.emergency ? emergencyPreview.track : buildMiddleRepairTrack(
       track,
       effectiveRoutePreview.geometry,
       middleRepairRange,
     )
 
     pushRepairHistory('middle', track, {
-      distanceMeters: effectiveRoutePreview.distanceMeters,
+      distanceMeters: emergencyPreview?.distanceMeters ?? effectiveRoutePreview.distanceMeters,
       waypoints: viaPoints.length,
+      emergency: Boolean(middleRepairRange.emergency),
     })
     setTrack(repairedTrack)
     setTailAnchorPointIndex(null)
@@ -1319,6 +1360,11 @@ function App() {
 
   function handleMapClick(latlng) {
     if (!track) {
+      return
+    }
+
+    if (mapMode === 'pick-middle-start' || mapMode === 'pick-middle-end') {
+      setMessage(t('manualClickTrack'))
       return
     }
 
@@ -1364,6 +1410,24 @@ function App() {
       return
     }
 
+    if (mapMode === 'pick-middle-start' || mapMode === 'pick-middle-end') {
+      const index = findNearestPointIndex(track.points, latlng, 160)
+      if (index === null) { setMessage(t('manualClickTrack')); return }
+      if (mapMode === 'pick-middle-start') {
+        setManualMiddleStartIndex(index)
+        setSelectedCutPointIndex(null)
+        setMapMode('pick-middle-end')
+        setMessage(t('manualPickEnd'))
+      } else if (index === manualMiddleStartIndex) {
+        setMessage(t('manualMiddleNeedSecond'))
+      } else {
+        setSelectedCutPointIndex(index)
+        setMessage(t('manualRangeReady'))
+      }
+      setError('')
+      return
+    }
+
     if (mapMode === 'pick-endpoint') {
       placeEndpoint(latlng)
       return
@@ -1375,17 +1439,6 @@ function App() {
 
     if (rebuildDirection === 'middle') {
       setMessage(t('clickBlueThread'))
-      return
-    }
-
-    if (manualMiddleStartIndex !== null) {
-      const nearestPointIndex = findNearestPointIndex(track.points, latlng, 160)
-      if (nearestPointIndex === null) {
-        setMessage(t('clickCloser'))
-        return
-      }
-
-      selectCutPoint(nearestPointIndex)
       return
     }
 
@@ -1671,6 +1724,31 @@ function App() {
     setMessage(t(usesDrawnFallback ? 'drawnRouteApplied' : 'tailApplied'))
   }
 
+  function updateMiddleRepairBorder(change, border) {
+    if (!change) {
+      setError(t('repairBorderInvalid'))
+      return
+    }
+    if (change.range[`${border}SampleIndex`] === middleRepairRange[`${border}SampleIndex`]) return
+    setMiddleRepairRange(change.range)
+    setTailAnchorPointIndex(border === 'start' ? change.pointIndex : tailAnchorPointIndex)
+    if (border === 'end') setEndpoint({ lat: change.point.lat, lon: change.point.lon })
+    setRemovedSegmentSamples(track.samples.slice(change.range.startSampleIndex, change.range.endSampleIndex + 1))
+    setError('')
+    setMessage(t('repairBorderMoved', { border: t(border === 'start' ? 'startBorder' : 'endBorder'), point: change.pointIndex + 1 }))
+  }
+
+  function moveMiddleRepairBorder(border, latlng) {
+    if (!track || rebuildDirection !== 'middle' || !middleRepairRange) return
+    updateMiddleRepairBorder(moveRepairBorder(track.points, middleRepairRange, border, { lat: latlng.lat, lon: latlng.lng }), border)
+  }
+
+  function shiftMiddleRepairBorder(border, direction) {
+    if (!track || rebuildDirection !== 'middle' || !middleRepairRange) return
+    const pointIndex = track.points.findIndex((point) => point.sampleIndex === middleRepairRange[`${border}SampleIndex`])
+    updateMiddleRepairBorder(repairRangeAtPoint(track.points, middleRepairRange, border, pointIndex + direction), border)
+  }
+
   function cancelTailRepair() {
     const previous = repairHistory[repairHistory.length - 1]
     if (previous && ['deleteBefore', 'deleteAfter'].includes(previous.type)) {
@@ -1715,6 +1793,7 @@ function App() {
   const hasTrackEdits = Boolean(sourceTrack && track && sourceTrack !== track)
   const exportBlockedByRepair = Boolean(rebuildDirection)
   const isPickingEndpoint = mapMode === 'pick-endpoint'
+  const isSelectingManualMiddle = mapMode === 'pick-middle-start' || mapMode === 'pick-middle-end'
   const isAddingOffGrid = mapMode === 'add-offgrid-waypoint'
   const endpointLabel = rebuildDirection === 'before'
     ? t('newStartLabel')
@@ -2007,6 +2086,23 @@ function App() {
         style={{ '--sidebar-width': `${sidebarWidth}px` }}
       >
         <aside className="sidebar">
+          <PersonalTrailsPanel
+            t={t}
+            disabled={isLoadingTrack || isExporting}
+            onChange={(geometry, rebuilt) => {
+              setPersonalTrails(geometry)
+              if (rebuilt) {
+                routeLegCacheRef.current.clear()
+                setRouteBuildRequest((current) => current + 1)
+              }
+            }}
+            onUse={() => {
+              routeLegCacheRef.current.clear()
+              setRouteProfile('personal')
+              setRouteBuildRequest((current) => current + 1)
+              setMessage(t('personalTrailsSelected'))
+            }}
+          />
           <div className="panel">
             <div className="panel-header">
               <div className="panel-header-main">
@@ -2030,7 +2126,7 @@ function App() {
                     <dd>{track.points.length}</dd>
                   </div>
                   <div>
-                    <dt>{t('distance')}</dt>
+                    <dt>{t(track.samples.some(sample => sample.reconstructed) ? 'emergencyDistance' : 'distance')}</dt>
                     <dd>{formatDistance(track.distanceMeters)}</dd>
                   </div>
                   <div>
@@ -2044,36 +2140,17 @@ function App() {
                 </dl>
 
                 <div className="step-box">
-                  <div className="step-title">{t('chooseCutTitle')}</div>
-                  <p className="muted-text">{t('chooseCutHelp')}</p>
-                  <div className="stack">
-                    <button type="button" className="ghost-button" onClick={deleteBeforeCutPoint} disabled={!selectedCutPoint}>
-                      {t('deleteBefore')}
-                    </button>
-                    <button type="button" className="primary-button" onClick={deleteAfterCutPoint} disabled={!selectedCutPoint}>
-                      {t('deleteAfter')}
-                    </button>
-                    <button type="button" className="ghost-button" onClick={undoLastChange} disabled={!repairHistory.length}>
-                      {t('undoLast')}
-                    </button>
-                    {hasTrackEdits ? (
-                      <button type="button" className="ghost-button" onClick={restoreOriginalTrack}>
-                        {t('restoreOriginal')}
-                      </button>
-                    ) : null}
-                  </div>
-                  {selectedCutPoint ? (
-                    <div className="note note-neutral">
-                      {t('selectedCutPoint', {
-                        point: selectedCutPointIndex + 1,
-                        location: formatLatLon(selectedCutPoint),
-                      })}
-                    </div>
-                  ) : null}
-
-                  <div className="manual-middle-box">
+                  <div className="manual-middle-box manual-repair-guide">
                     <div className="step-title">{t('manualMiddleTitle')}</div>
                     <p className="muted-text">{t('manualMiddleHelp')}</p>
+                    {isSelectingManualMiddle ? (
+                      <ol className="manual-repair-steps">
+                        <li className={manualMiddleStartPoint ? 'step-complete' : 'step-current'}>{t('manualStepStart')}</li>
+                        <li className={selectedCutPoint ? 'step-complete' : manualMiddleStartPoint ? 'step-current' : ''}>{t('manualStepEnd')}</li>
+                        <li className={selectedCutPoint ? 'step-current' : ''}>{t('manualStepEdit')}</li>
+                      </ol>
+                    ) : null}
+                    {isSelectingManualMiddle ? <p role="status" className="note note-neutral">{t(mapMode === 'pick-middle-start' ? 'manualPickStart' : selectedCutPoint ? 'manualRangeReady' : 'manualPickEnd')}</p> : null}
                     {manualMiddleStartPoint ? (
                       <div className="note note-neutral">
                         {t('manualMiddleStartPoint', {
@@ -2082,10 +2159,13 @@ function App() {
                         })}
                       </div>
                     ) : null}
+                    {isSelectingManualMiddle && selectedCutPoint ? (
+                      <div className="note note-neutral">{t('manualMiddleEndPoint', { point: selectedCutPointIndex + 1, location: formatLatLon(selectedCutPoint) })}</div>
+                    ) : null}
                     <div className="stack">
-                      {!manualMiddleStartPoint ? (
-                        <button type="button" className="ghost-button" onClick={setManualMiddleStartFromCutPoint} disabled={!selectedCutPoint}>
-                          {t('setManualMiddleStart')}
+                      {!isSelectingManualMiddle ? (
+                        <button type="button" className="primary-button" onClick={startManualMiddleSelection} disabled={Boolean(rebuildDirection) || isLoadingTrack || isExporting}>
+                          {t('startManualMiddle')}
                         </button>
                       ) : (
                         <>
@@ -2093,10 +2173,11 @@ function App() {
                             type="button"
                             className="primary-button"
                             onClick={beginManualMiddleRepair}
-                            disabled={!selectedCutPoint || selectedCutPointIndex === manualMiddleStartIndex}
+                            disabled={!manualMiddleStartPoint || !selectedCutPoint || selectedCutPointIndex === manualMiddleStartIndex}
                           >
                             {t('repairManualMiddle')}
                           </button>
+                          {manualMiddleStartPoint ? <button type="button" className="ghost-button" onClick={startManualMiddleSelection}>{t('manualRestartSelection')}</button> : null}
                           <button type="button" className="ghost-button" onClick={cancelManualMiddleSelection}>
                             {t('cancelManualMiddle')}
                           </button>
@@ -2104,12 +2185,40 @@ function App() {
                       )}
                     </div>
                   </div>
+                  {!isSelectingManualMiddle && !rebuildDirection ? (
+                    <details className="trim-track-details" open={Boolean(selectedCutPoint)}>
+                      <summary>{t('chooseCutTitle')}</summary>
+                      <p className="muted-text">{t('chooseCutHelp')}</p>
+                      {selectedCutPoint ? <div className="note note-neutral">{t('selectedCutPoint', { point: selectedCutPointIndex + 1, location: formatLatLon(selectedCutPoint) })}</div> : null}
+                      <div className="stack">
+                        <button type="button" className="ghost-button" onClick={deleteBeforeCutPoint} disabled={!selectedCutPoint}>{t('deleteBefore')}</button>
+                        <button type="button" className="ghost-button" onClick={deleteAfterCutPoint} disabled={!selectedCutPoint}>{t('deleteAfter')}</button>
+                      </div>
+                    </details>
+                  ) : null}
+                  <div className="stack">
+                    <button type="button" className="ghost-button" onClick={undoLastChange} disabled={!repairHistory.length}>{t('undoLast')}</button>
+                    {hasTrackEdits ? <button type="button" className="ghost-button" onClick={restoreOriginalTrack}>{t('restoreOriginal')}</button> : null}
+                  </div>
                 </div>
               </>
             ) : !collapsedPanels.track ? (
               <p className="muted-text">{t('loadTrackToStart')}</p>
             ) : null}
           </div>
+
+          <TrackTimePanel
+            key={`${track?.name}-${track?.samples[0]?.time}-${track?.samples.at(-1)?.time}`}
+            track={track}
+            disabled={Boolean(rebuildDirection) || isLoadingTrack || isExporting}
+            t={t}
+            onApply={(updated) => {
+              pushRepairHistory('time', track)
+              setTrack(updated)
+              setError('')
+              setMessage(t('trackTimeApplied'))
+            }}
+          />
 
           {track ? (
             <div className="panel visualization-panel">
@@ -2128,6 +2237,9 @@ function App() {
                   <TrackCharts
                     onSelectionChange={setChartHighlightedPoints}
                     samples={track.samples}
+                    sourceTrack={sourceTrack}
+                    statistics={track.statistics}
+                    fitSummary={track.fitSummary}
                     t={t}
                   />
                 </Suspense>
@@ -2158,17 +2270,16 @@ function App() {
                 </button>
                 <div className="segment-list">
                   {suspiciousSegments.map((segment, index) => (
-                    <button
+                    <div
                       key={segment.id}
-                      type="button"
                       className={`segment-button ${
-                        middleRepairRange?.startSampleIndex === segment.startSampleIndex &&
+                        middleRepairRange?.issueId === segment.id || middleRepairRange?.startSampleIndex === segment.startSampleIndex &&
                         middleRepairRange?.endSampleIndex === segment.endSampleIndex
                           ? 'segment-button-active'
                           : ''
                       }`}
-                      onClick={() => beginMiddleRepair(segment)}
                     >
+                      <button type="button" className="segment-select" onClick={() => beginMiddleRepair(segment)}>
                       <div className="segment-title-row">
                         <strong>{t('issue', { number: index + 1 })}</strong>
                         <span className={`severity-badge severity-${segment.severity}`}>
@@ -2183,7 +2294,33 @@ function App() {
                         distance: formatDistance(segment.distance),
                         duration: formatDuration(segment.seconds),
                       })}</span>
-                    </button>
+                      </button>
+                      <button
+                        type="button"
+                        role="switch"
+                        className="emergency-switch"
+                        aria-label={t('emergencyIssue', { number: index + 1 })}
+                        aria-checked={Boolean(middleRepairRange?.emergency && (middleRepairRange.issueId === segment.id || middleRepairRange.startSampleIndex === segment.startSampleIndex && middleRepairRange.endSampleIndex === segment.endSampleIndex))}
+                        disabled={Boolean(rebuildDirection && !(middleRepairRange?.issueId === segment.id || middleRepairRange?.startSampleIndex === segment.startSampleIndex && middleRepairRange?.endSampleIndex === segment.endSampleIndex))}
+                        title={t('emergencyHelp')}
+                        onClick={() => {
+                          if (rebuildDirection === 'middle') {
+                            if (!middleRepairRange.emergency && !viaPoints.length) {
+                              const anchors = getEmergencyRecordingAnchors(track.samples, middleRepairRange)
+                              setViaPoints(anchors)
+                              setLegModes(getEmergencyLegModes(track.samples, middleRepairRange, anchors))
+                            }
+                            setMiddleRepairRange(current => ({ ...current, emergency: !current.emergency, issueId: segment.id }))
+                          } else if (beginMiddleRepair({ ...segment, emergency: true })) {
+                            const anchors = getEmergencyRecordingAnchors(track.samples, segment)
+                            setViaPoints(anchors)
+                            setLegModes(getEmergencyLegModes(track.samples, segment, anchors))
+                          }
+                        }}
+                      >
+                        <span>{t('emergencyMode')}</span><span className="switch-track" aria-hidden="true"><span /></span>
+                      </button>
+                    </div>
                   ))}
                 </div>
               </>
@@ -2192,7 +2329,7 @@ function App() {
             ) : null}
           </div>
 
-          <div className="panel">
+          {rebuildDirection ? <div className="panel repair-route-panel">
             <div className="panel-header">
               <div className="panel-header-main">
                 <h2>{rebuildDirection === 'middle' ? t('middleRepair') : t('routeRebuild')}</h2>
@@ -2264,6 +2401,7 @@ function App() {
                   >
                     <option value="cycling">{t('cycling')}</option>
                     <option value="walking">{t('walking')}</option>
+                    <option value="personal">{t('personalTrails')}</option>
                   </select>
                 </div>
 
@@ -2304,6 +2442,25 @@ function App() {
                   ) : null}
                   {rebuildDirection === 'middle' ? (
                     <>
+                      <div className="repair-border-controls">
+                        <p className="muted-text">{t('repairBorderHelp')}</p>
+                        {['start', 'end'].map((border) => {
+                          const pointIndex = border === 'start' ? middleStartPointIndex : middleEndPointIndex
+                          return <div className="repair-border-row" key={border}>
+                            <strong>{t(border === 'start' ? 'startBorder' : 'endBorder')} · {pointIndex + 1}</strong>
+                            <div className="repair-border-buttons">
+                              {[-1, 1].map((direction) => <button
+                                key={direction}
+                                type="button"
+                                className="ghost-button"
+                                aria-label={t(direction === -1 ? 'repairBorderEarlier' : 'repairBorderLater', { border: t(border === 'start' ? 'startBorder' : 'endBorder') })}
+                                onClick={() => shiftMiddleRepairBorder(border, direction)}
+                                disabled={!repairRangeAtPoint(track.points, middleRepairRange, border, pointIndex + direction)}
+                              >{t(direction === -1 ? 'onePointEarlier' : 'onePointLater')}</button>)}
+                            </div>
+                          </div>
+                        })}
+                      </div>
                       <div className="border-expand-actions">
                         <button
                           type="button"
@@ -2334,7 +2491,7 @@ function App() {
                         type="button"
                         className="primary-button"
                         onClick={applyMiddleRepair}
-                        disabled={!routeCanBeApplied}
+                        disabled={!routeCanBeApplied || Boolean(middleRepairRange?.emergency && !emergencyPreview?.track)}
                       >
                         {t('applyMiddle')}
                       </button>
@@ -2350,7 +2507,7 @@ function App() {
                 ) : null}
                 {effectiveRoutePreview.status === 'error' ? (
                   <div className="note note-warning route-retry-note">
-                    <span>{routeFailureMessage}</span>
+                    <span>{routeProfile === 'personal' ? t('personalTrailsNoRoute') : routeFailureMessage}</span>
                     <button
                       type="button"
                       className="ghost-button"
@@ -2362,14 +2519,21 @@ function App() {
                 ) : null}
                 {effectiveRoutePreview.status === 'ready' ? (
                   <div className="note note-good">
-                    {t('suggestedLength', { distance: formatDistance(effectiveRoutePreview.distanceMeters) })}
+                    {t('suggestedLength', { distance: formatDistance(emergencyPreview?.distanceMeters ?? effectiveRoutePreview.distanceMeters) })}
                   </div>
                 ) : null}
-                {routeWarning ? <div className="note note-warning">{routeWarning}</div> : null}
+                {middleRepairRange?.emergency ? (
+                  <div className="note note-warning emergency-note">
+                    <strong>{t('emergencyMode')}</strong>
+                    <span>{t('emergencyHelp')}</span>
+                    {emergencyPreview?.track ? <span>{t('emergencyTotal', { distance: formatDistance(emergencyPreview.track.distanceMeters) })}</span> : null}
+                    {emergencyPreview?.error ? <span role="alert">{t(emergencyPreview.error)}</span> : null}
+                  </div>
+                ) : routeWarning ? <div className="note note-warning">{routeWarning}</div> : null}
 
                 <div className="quality-card">
                   <div className="quality-title">{t('repairQuality')}</div>
-                  {repairQuality ? (
+                  {repairQuality && !emergencyPreview?.error ? (
                     <>
                       <div className="quality-row">
                         <span className={`quality-dot ${repairQuality.directSegments ? 'quality-dot-warning' : ''}`} />
@@ -2379,29 +2543,29 @@ function App() {
                             : t('qualityRoadRouted')}
                         </span>
                       </div>
-                      {repairQuality.differencePercent !== null ? (
+                      {!middleRepairRange?.emergency && repairQuality.differencePercent !== null ? (
                         <div className="quality-row">
                           <span className={`quality-dot ${repairQuality.largeDetour ? 'quality-dot-danger' : ''}`} />
                           <span>{t('qualityDifference', { percent: repairQuality.differencePercent })}</span>
                         </div>
                       ) : null}
-                      {repairQuality.largeDetour ? (
+                      {!middleRepairRange?.emergency && repairQuality.largeDetour ? (
                         <div className="note note-warning">{t('qualityLargeDetour')}</div>
                       ) : (
                         <div className="quality-ready">{t('qualityReady')}</div>
                       )}
                     </>
                   ) : (
-                    <p className="muted-text">{t('qualityNeedsRoute')}</p>
+                    <p className="muted-text">{t(emergencyPreview?.error || 'qualityNeedsRoute')}</p>
                   )}
                 </div>
               </>
             ) : !collapsedPanels.rebuild ? (
               <p className="muted-text">{t('selectRepairHelp')}</p>
             ) : null}
-          </div>
+          </div> : null}
 
-          <div className="panel">
+          {rebuildDirection ? <div className="panel">
             <div className="panel-header">
               <div className="panel-header-main">
                 <h2>{t('waypointEditor')}</h2>
@@ -2441,7 +2605,7 @@ function App() {
             {!collapsedPanels.waypoints && activeWaypoint ? (
               <p className="muted-text">{t('waypointCardOpen')}</p>
             ) : null}
-          </div>
+          </div> : null}
 
           <div className="panel">
             <div className="panel-header">
@@ -2462,6 +2626,7 @@ function App() {
                       <span className="history-index">{repairHistory.length - index}</span>
                       <div>
                         <strong>{t(getHistoryTranslationKey(entry.type))}</strong>
+                        {entry.details.emergency ? <span>{t('emergencyMode')}</span> : null}
                         {entry.details.distanceMeters ? (
                           <span>{formatDistance(entry.details.distanceMeters)}</span>
                         ) : null}
@@ -2575,9 +2740,11 @@ function App() {
               </button>
             ) : null}
           </div>
-          {isPickingEndpoint || isAddingOffGrid ? (
+          {isPickingEndpoint || isAddingOffGrid || isSelectingManualMiddle ? (
             <div className="map-mode-banner">
-              {isPickingEndpoint
+              {isSelectingManualMiddle
+                ? t(mapMode === 'pick-middle-start' ? 'manualPickStart' : selectedCutPoint ? 'manualRangeReady' : 'manualPickEnd')
+                : isPickingEndpoint
                 ? t('endpointPlacementActive', {
                     point: rebuildDirection === 'before' ? t('startPoint') : t('endpoint'),
                   })
@@ -2587,20 +2754,26 @@ function App() {
           <Suspense fallback={<div className="map-loading">{t('loading')}</div>}>
             <TrackMap
               activeWaypointId={activeWaypointId}
+              anchorDraggable={rebuildDirection === 'middle'}
               anchorPoint={anchorPoint}
               anchorLabel={rebuildDirection === 'middle' ? t('repairStartBorder') : t('lastKnownPoint')}
               endpoint={endpoint}
+              endpointDraggable={Boolean(rebuildDirection)}
               endpointLabel={endpointLabel}
               fitRequest={fitRequest}
-              highlightedTrackPoints={chartHighlightedPoints}
+              highlightedTrackPoints={isSelectingManualMiddle && manualMiddleStartIndex !== null && selectedCutPointIndex !== null
+                ? track.points.slice(Math.min(manualMiddleStartIndex, selectedCutPointIndex), Math.max(manualMiddleStartIndex, selectedCutPointIndex) + 1)
+                : chartHighlightedPoints}
               initialView={initialView}
               interactionMode={mapMode}
               layoutSignature={layoutSignature}
               manualMiddleStartLabel={t('manualMiddleStartMarker')}
               manualMiddleStartPoint={manualMiddleStartPoint}
               mapLayer={mapLayer}
+              personalTrails={personalTrails}
               offGridLabel={t('offGridLabel')}
-              onEndpointMove={placeEndpoint}
+              onAnchorMove={(latlng) => moveMiddleRepairBorder('start', latlng)}
+              onEndpointMove={rebuildDirection === 'middle' ? (latlng) => moveMiddleRepairBorder('end', latlng) : placeEndpoint}
               onMapClick={handleMapClick}
               onRouteSegmentClick={handleRouteSegmentClick}
               onTrackClick={handleTrackClick}
@@ -2612,7 +2785,7 @@ function App() {
               rebuildDirection={rebuildDirection}
               routeSegments={effectiveRoutePreview.segments}
               selectedCutPoint={selectedCutPoint}
-              selectedCutPointLabel={t('cutPoint')}
+              selectedCutPointLabel={t(isSelectingManualMiddle ? 'manualMiddleEndMarker' : 'cutPoint')}
               showSourceTrack={hasTrackEdits && showOriginalTrack}
               sourceTrack={sourceTrack}
               suspiciousSegments={suspiciousSegments}
@@ -2667,7 +2840,7 @@ function getStoredRouteProfile() {
   }
 
   const stored = readLocalPreference('fixyourtrack-route-profile')
-  return ['cycling', 'walking'].includes(stored) ? stored : 'cycling'
+  return ['cycling', 'walking', 'personal'].includes(stored) ? stored : 'cycling'
 }
 
 function getStoredMapLayer() {
@@ -2729,7 +2902,7 @@ function countAcceptedRepairGroups(samples) {
 }
 
 function areTrackSamplesEquivalent(firstTrack, secondTrack) {
-  if (firstTrack.samples.length !== secondTrack.samples.length) {
+  if (firstTrack.name !== secondTrack.name || firstTrack.samples.length !== secondTrack.samples.length) {
     return false
   }
 
@@ -2737,6 +2910,7 @@ function areTrackSamplesEquivalent(firstTrack, secondTrack) {
     const comparison = secondTrack.samples[index]
     return sample.lat === comparison.lat &&
       sample.lon === comparison.lon &&
+      sample.time === comparison.time &&
       Boolean(sample.repairAccepted) === Boolean(comparison.repairAccepted)
   })
 }
@@ -2761,6 +2935,7 @@ function getHistoryTranslationKey(type) {
     rebuildBefore: 'historyRebuildBefore',
     rebuildAfter: 'historyRebuildAfter',
     restore: 'historyRestored',
+    time: 'trackTimeApplied',
   }[type] ?? 'historyMiddle'
 }
 
@@ -3137,6 +3312,10 @@ async function readFitFile(file) {
   return finalizeTrack({
     name: file.name.replace(/\.fit$/i, ''),
     format: 'fit',
+    fitSummary: createFitSummary(data.sessions, samples),
+    ...(data.sessions?.length === 1 && Number.isFinite(data.sessions[0].avg_cadence)
+      ? { recordedAverageCadence: data.sessions[0].avg_cadence + (Number.isFinite(data.sessions[0].avg_fractional_cadence) ? data.sessions[0].avg_fractional_cadence : 0) }
+      : {}),
     samples,
   })
 }

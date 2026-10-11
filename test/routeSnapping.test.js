@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { getRouteControlSnapUpdates } from '../src/routeSnapping.js'
+import { applyRouteControlSnapUpdates, getRouteControlSnapUpdates } from '../src/routeSnapping.js'
+import { buildRoutePreview, hydrateRouteLegCache } from '../src/routeBuilder.js'
+import { getPolylineLength } from '../src/trackCore.js'
 
 const controls = [
   { id: 'anchor', lat: 55.75, lon: 37.61 },
@@ -50,4 +52,35 @@ test('rejects implausibly distant provider snapping', () => {
     }),
     [],
   )
+})
+
+test('reuses the routed geometry after snapping without a second request or another snap', async () => {
+  const cache = new Map()
+  let requests = 0
+  const fetchImpl = async () => {
+    requests += 1
+    return {
+      ok: true,
+      json: async () => ({ features: [{ geometry: {
+        type: 'LineString',
+        coordinates: snappedControls.map(({ lat, lon }) => [lon, lat]),
+      } }] }),
+    }
+  }
+  const original = await buildRoutePreview(controls, {}, 'cycling', { cache, fetchImpl })
+  const originalGeometry = structuredClone(original.geometry)
+  const updates = getRouteControlSnapUpdates(controls, original.snappedControls, {}, {
+    fixedControlIds: ['anchor'],
+  })
+  const snapped = applyRouteControlSnapUpdates(controls, original, updates)
+  assert.equal(hydrateRouteLegCache(cache, snapped.controls, {}, 'cycling', snapped.preview), 2)
+
+  const reused = await buildRoutePreview(snapped.controls, {}, 'cycling', { cache, fetchImpl })
+  assert.equal(requests, 1)
+  assert.deepEqual(reused.geometry, snapped.preview.geometry)
+  assert.deepEqual(reused.geometry[0], { lat: controls[0].lat, lon: controls[0].lon })
+  assert.deepEqual(reused.geometry.at(-1), { lat: snappedControls[2].lat, lon: snappedControls[2].lon })
+  assert.equal(reused.distanceMeters, getPolylineLength(reused.geometry))
+  assert.deepEqual(getRouteControlSnapUpdates(snapped.controls, reused.snappedControls, {}), [])
+  assert.deepEqual(original.geometry, originalGeometry, 'the original cached route stays unchanged')
 })

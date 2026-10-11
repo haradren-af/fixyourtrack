@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Fix Your Track" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v2" xmlns:fixtrack="https://fixyourtrack.local/extensions/v1">
+  <trk>
+    <name>Synthetic FIT summary example</name>
+    <extensions><fixtrack:activitySummary version="1" source="fit-session" encoding="json">{"version":1,"source":"fit-session","sessions":[{"index":0,"totalDistanceMeters":200,"totalElapsedSeconds":25,"totalTimerSeconds":21,"totalMovingSeconds":19,"averageSpeedMps":10.4,"startTime":"2026-10-08T23:59:58.000Z","endTime":"2026-10-09T00:00:23.000Z"}],"binding":{"sampleCount":3,"firstSampleTime":"2026-10-09T00:00:00.000Z","timeDigest":"afb6498b","distanceDigest":"c9705333","segmentDigest":"8a4b166a","sessionIndex":0,"sessionRanges":[{"sessionIndex":0,"firstSampleIndex":0,"lastSampleIndex":2}],"mappingStatus":"single-session"},"applicability":{"distance":true,"time":true,"averageSpeed":true}}</fixtrack:activitySummary></extensions>
+    <trkseg><trkpt lat="55" lon="37"><time>2026-10-09T00:00:00.000Z</time><extensions><fixtrack:distance>0</fixtrack:distance></extensions></trkpt><trkpt lat="55.001" lon="37"><time>2026-10-09T00:00:10.000Z</time><extensions><fixtrack:distance>100</fixtrack:distance></extensions></trkpt><trkpt lat="55.002" lon="37"><time>2026-10-09T00:00:20.000Z</time><extensions><fixtrack:distance>200</fixtrack:distance></extensions></trkpt></trkseg>
+  </trk>
+</gpx>

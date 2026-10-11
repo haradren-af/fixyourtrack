@@ -1,5 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { getSelectedProfilePoints } from './trackChartData'
+import { getCadenceStats, getProfileStatistics, getRecordedCadenceAverage, getSelectedProfilePoints } from './trackChartData'
+import { getSampleDistances } from './trackCore'
+import { resolveFitSummary } from './fitSummary'
 
 const MINIMUM_WIDTH = 320
 const MAXIMUM_RENDERED_PROFILE_POINTS = 5000
@@ -27,6 +29,13 @@ const chartDefinitions = [
     unit: 'km/h',
   },
   {
+    color: '#d65b25',
+    fill: 'none',
+    key: 'cadence',
+    labelKey: 'chartCadence',
+    unit: 'rpm',
+  },
+  {
     color: '#c43c55',
     fill: 'rgba(196, 60, 85, 0.12)',
     key: 'heartRate',
@@ -35,12 +44,11 @@ const chartDefinitions = [
   },
 ]
 
-const altitudeDefinition = chartDefinitions.find(({ key }) => key === 'altitude')
-
-function TrackCharts({ onSelectionChange, samples, t }) {
+function TrackCharts({ onSelectionChange, samples, sourceTrack, statistics, fitSummary, t }) {
   const [axis, setAxis] = useState('distance')
   const [selection, setSelection] = useState(null)
-  const profile = useMemo(() => buildTrackProfile(samples), [samples])
+  const profile = useMemo(() => buildTrackProfile(samples, fitSummary), [samples, fitSummary])
+  const recordedAverageCadence = useMemo(() => getRecordedCadenceAverage(samples, sourceTrack), [samples, sourceTrack])
   const { availableCharts, hasTimeAxis } = useMemo(() => ({
     availableCharts: chartDefinitions.filter(({ key }) => (
       profile.some((point) => Number.isFinite(point[key]))
@@ -94,6 +102,8 @@ function TrackCharts({ onSelectionChange, samples, t }) {
             axis={activeAxis}
             definition={definition}
             profile={profile}
+            recordedAverageCadence={recordedAverageCadence}
+            statistics={statistics}
             selection={selection}
             setSelection={setSelection}
             t={t}
@@ -106,7 +116,8 @@ function TrackCharts({ onSelectionChange, samples, t }) {
 
 export default memo(TrackCharts)
 
-function ProfileChart({ axis, definition, profile, selection, setSelection, t }) {
+function ProfileChart({ axis, definition, profile, recordedAverageCadence, statistics, selection, setSelection, t }) {
+  const [hiddenBackgrounds, setHiddenBackgrounds] = useState([])
   const chartRef = useRef(null)
   const dragStartRef = useRef(null)
   const [measuredWidth, setMeasuredWidth] = useState(MINIMUM_WIDTH)
@@ -131,19 +142,26 @@ function ProfileChart({ axis, definition, profile, selection, setSelection, t })
     return () => observer.disconnect()
   }, [])
 
-  const altitudeBackground = useMemo(() => {
-    if (definition.key !== 'speed' || !sampledPoints.length) {
-      return null
+  const backgrounds = useMemo(() => {
+    const keys = definition.key === 'cadence' ? ['altitude', 'speed'] : definition.key === 'speed' ? ['altitude'] : []
+    if (!keys.length || !sampledPoints.length) {
+      return []
     }
 
     const sampledAxisValues = sampledPoints.map((point) => point[axis])
-    return buildAltitudeBackground(
-      profile,
-      axis,
-      Math.min(...sampledAxisValues),
-      Math.max(...sampledAxisValues),
-      width,
-    )
+    return keys.map((key) => ({
+      definition: key === 'speed'
+        ? { ...chartDefinitions.find((item) => item.key === key), color: '#38bdf8', fill: 'none' }
+        : chartDefinitions.find((item) => item.key === key),
+      geometry: buildChartBackground(
+        profile,
+        axis,
+        Math.min(...sampledAxisValues),
+        Math.max(...sampledAxisValues),
+        width,
+        key,
+      ),
+    })).filter((background) => background.geometry)
   }, [axis, definition.key, profile, sampledPoints, width])
 
   if (!sampledPoints.length) {
@@ -165,7 +183,8 @@ function ProfileChart({ axis, definition, profile, selection, setSelection, t })
   const yTicks = [yMax, (yMax + yMin) / 2, yMin]
   const xTicks = buildTicks(xMin, xMax, width >= 700 ? 7 : width >= 480 ? 5 : 3)
   const selectedRange = getSelectedRange(selection, xMin, xMax)
-  const stats = buildChartStats(definition.key, profile, t, axis, selectedRange)
+  const speedStatistics = definition.key === 'speed' ? getProfileStatistics(profile, axis, selectedRange, statistics) : null
+  const stats = buildChartStats(definition.key, profile, t, axis, selectedRange, recordedAverageCadence, speedStatistics)
   const selectionX = selectedRange
     ? scale(selectedRange.start, xMin, xMax, PADDING.left, width - PADDING.right)
     : null
@@ -212,11 +231,28 @@ function ProfileChart({ axis, definition, profile, selection, setSelection, t })
   }
 
   return (
-    <section className="profile-chart" ref={chartRef}>
+    <section className="profile-chart" data-chart={definition.key} ref={chartRef}>
       <h3 className="profile-chart-heading">
         <span className="chart-swatch" style={{ background: definition.color }} />
         {t(definition.labelKey)}
       </h3>
+
+      {definition.key === 'cadence' && backgrounds.length ? (
+        <div className="chart-background-legend" role="group" aria-label={t('chartBackgroundLayers')}>
+          <span className="chart-main-legend"><span className="chart-swatch" style={{ background: definition.color }} />{t('chartCadenceMain')}</span>
+          {backgrounds.map(({ definition: background }) => (
+            <button
+              type="button"
+              key={background.key}
+              aria-pressed={!hiddenBackgrounds.includes(background.key)}
+              onClick={() => setHiddenBackgrounds((current) => current.includes(background.key)
+                ? current.filter((key) => key !== background.key)
+                : [...current, background.key])}
+            ><span className="chart-swatch" style={{ background: background.color }} />{t(background.labelKey)}</button>
+          ))}
+          <span>{t('chartBackgroundScale')}</span>
+        </div>
+      ) : null}
 
       <div className="profile-chart-card">
         <p className="chart-selection-hint">
@@ -238,16 +274,16 @@ function ProfileChart({ axis, definition, profile, selection, setSelection, t })
           role="img"
           aria-label={`${t(definition.labelKey)}, ${t(axis === 'distance' ? 'chartByDistance' : 'chartByTime')}`}
         >
-          {altitudeBackground ? (
-            <g className="chart-altitude-background" aria-hidden="true">
-              <path d={altitudeBackground.areaPath} fill={altitudeDefinition.fill} />
+          {backgrounds.filter(({ definition: background }) => !hiddenBackgrounds.includes(background.key)).map(({ definition: background, geometry }) => (
+            <g key={background.key} className={`chart-${background.key}-background`} aria-hidden="true">
+              <path d={geometry.areaPath} fill={background.fill} />
               <path
                 className="chart-line"
-                d={altitudeBackground.linePath}
-                stroke={altitudeDefinition.color}
+                d={geometry.linePath}
+                stroke={background.color}
               />
             </g>
-          ) : null}
+          ))}
 
           {yTicks.map((tick, index) => {
             const y = scale(tick, yMin, yMax, chartBottom, PADDING.top)
@@ -261,8 +297,8 @@ function ProfileChart({ axis, definition, profile, selection, setSelection, t })
             )
           })}
 
-          <path d={areaPath} fill={definition.fill} />
-          <path className="chart-line" d={linePath} stroke={definition.color} />
+          {definition.key !== 'cadence' ? <path d={areaPath} fill={definition.fill} /> : null}
+          <path className={`chart-line${definition.key === 'cadence' ? ' chart-cadence-line' : ''}`} d={linePath} stroke={definition.color} />
 
           <g className="chart-endpoint-marker chart-endpoint-start" aria-hidden="true">
             <circle cx={PADDING.left} cy={16} r={10} />
@@ -312,12 +348,18 @@ function ProfileChart({ axis, definition, profile, selection, setSelection, t })
             </div>
           ))}
         </div>
+        {speedStatistics ? <p className="chart-hint">{t(speedStatistics.averageSpeedBasis === 'elapsed' ? 'chartSpeedReconstructedHint' : speedStatistics.sources.averageSpeed === 'device' ? 'chartSpeedRecordedHint' : speedStatistics.sources.averageSpeed === 'recorded-derived' ? 'chartSpeedDerivedHint' : 'chartSpeedEstimatedHint')}</p> : null}
+        {definition.key === 'cadence' ? (
+          <p className="chart-hint">{t(!selectedRange && Number.isFinite(recordedAverageCadence)
+            ? 'chartCadenceRecordedAverageHint'
+            : 'chartCadencePedalingAverageHint')}</p>
+        ) : null}
       </div>
     </section>
   )
 }
 
-function buildTrackProfile(samples) {
+function buildTrackProfile(samples, fitSummary) {
   if (!samples?.length) {
     return []
   }
@@ -330,26 +372,28 @@ function buildTrackProfile(samples) {
       break
     }
   }
-  let cumulativeDistance = 0
+  const sampleDistances = getSampleDistances(samples, { useRepairedGeometry: !resolveFitSummary(fitSummary, samples).applicability.distance })
 
   return samples.map((sample, index) => {
     const previous = samples[index - 1]
-    if (previous && hasCoordinates(previous) && hasCoordinates(sample)) {
-      cumulativeDistance += haversineDistance(previous, sample)
-    }
-
     const timestamp = parseTime(sample.time)
-    const speed = Number.isFinite(sample.speed)
+    const speed = sample.reconstructed ? null : Number.isFinite(sample.speed)
       ? sample.speed * 3.6
       : deriveSpeed(previous, sample)
 
     return {
       altitude: Number.isFinite(sample.ele) ? sample.ele : null,
-      distance: cumulativeDistance,
+      cadence: Number.isFinite(sample.cadence) ? sample.cadence : null,
+      distance: sampleDistances[index],
       heartRate: Number.isFinite(sample.heartRate) ? sample.heartRate : null,
       lat: Number.isFinite(sample.lat) ? sample.lat : null,
       lon: Number.isFinite(sample.lon) ? sample.lon : null,
       speed,
+      segmentStart: Boolean(sample.segmentStart),
+      reconstructed: Boolean(sample.reconstructed),
+      routeDistance: Boolean(sample.routeDistance),
+      emergencyRepair: Boolean(sample.emergencyRepair),
+      gapBefore: Boolean(previous?.reconstructed),
       time: Number.isFinite(timestamp) && Number.isFinite(firstValidTime)
         ? Math.max(0, (timestamp - firstValidTime) / 1000)
         : null,
@@ -376,11 +420,11 @@ function buildPath(points, axis, valueKey, xMin, xMax, yMin, yMax, width) {
   return points.map((point, index) => {
     const x = scale(point[axis], xMin, xMax, PADDING.left, width - PADDING.right)
     const y = scale(point[valueKey], yMin, yMax, HEIGHT - PADDING.bottom, PADDING.top)
-    return `${index ? 'L' : 'M'} ${x.toFixed(2)} ${y.toFixed(2)}`
+    return `${index && !point.gapBefore ? 'L' : 'M'} ${x.toFixed(2)} ${y.toFixed(2)}`
   }).join(' ')
 }
 
-function buildAltitudeBackground(profile, axis, xMin, xMax, width) {
+function buildChartBackground(profile, axis, xMin, xMax, width, key) {
   const points = downsampleMatching(
     profile,
     getChartSampleLimit(width),
@@ -388,20 +432,20 @@ function buildAltitudeBackground(profile, axis, xMin, xMax, width) {
       Number.isFinite(point[axis]) &&
       point[axis] >= xMin &&
       point[axis] <= xMax &&
-      Number.isFinite(point.altitude)
+      Number.isFinite(point[key])
     ),
   )
   if (!points.length) {
     return null
   }
 
-  const altitudeValues = points.map((point) => point.altitude)
+  const altitudeValues = points.map((point) => point[key])
   const rawMinimum = Math.min(...altitudeValues)
   const rawMaximum = Math.max(...altitudeValues)
   const padding = Math.max((rawMaximum - rawMinimum) * 0.08, 1)
   const minimum = rawMinimum - padding
   const maximum = rawMaximum + padding
-  const linePath = buildPath(points, axis, 'altitude', xMin, xMax, minimum, maximum, width)
+  const linePath = buildPath(points, axis, key, xMin, xMax, minimum, maximum, width)
   const chartBottom = HEIGHT - PADDING.bottom
 
   return {
@@ -427,7 +471,15 @@ function getSelectedRange(selection, minimum, maximum) {
   }
 }
 
-function buildChartStats(key, profile, t, axis, selectedRange) {
+function buildChartStats(key, profile, t, axis, selectedRange, recordedAverageCadence, speedStatistics) {
+  if (key === 'cadence') {
+    const { average, minimum, maximum } = getCadenceStats(profile, axis, selectedRange, recordedAverageCadence)
+    return [
+      { label: t('chartAverageCadence'), value: Number.isFinite(average) ? `${Math.round(average)} rpm` : '--' },
+      { label: t('chartMaximumCadence'), value: Number.isFinite(maximum) ? `${Math.round(maximum)} rpm` : '--' },
+      { label: t('chartMinimumCadence'), value: Number.isFinite(minimum) ? `${Math.round(minimum)} rpm` : '--' },
+    ]
+  }
   if (key === 'altitude') {
     let uphill = 0
     let downhill = 0
@@ -467,42 +519,12 @@ function buildChartStats(key, profile, t, axis, selectedRange) {
   }
 
   if (key === 'speed') {
-    let earliestTime = Number.POSITIVE_INFINITY
-    let latestTime = Number.NEGATIVE_INFINITY
-    let movingTime = 0
-    let previousPoint = null
-    let speedCount = 0
-    let speedTotal = 0
-    let timeCount = 0
-
-    for (const point of profile) {
-      if (!isPointInRange(point, axis, selectedRange)) {
-        continue
-      }
-
-      if (Number.isFinite(point.speed)) {
-        speedTotal += point.speed
-        speedCount += 1
-      }
-      if (Number.isFinite(point.time)) {
-        earliestTime = Math.min(earliestTime, point.time)
-        latestTime = Math.max(latestTime, point.time)
-        timeCount += 1
-      }
-      if (previousPoint) {
-        const elapsed = point.time - previousPoint.time
-        if (Number.isFinite(elapsed) && elapsed > 0 && elapsed < 300 && point.speed > 1) {
-          movingTime += elapsed
-        }
-      }
-      previousPoint = point
-    }
-
-    const elapsed = timeCount > 1 ? latestTime - earliestTime : null
+    const { averageSpeedMps, averageSpeedBasis, movingSeconds, timerSeconds, elapsedSeconds, sources } = speedStatistics
     return [
-      { label: t('chartAverageSpeed'), value: speedCount ? `${formatYValue(speedTotal / speedCount, key)} km/h` : '--' },
-      { label: t('chartMovingTime'), value: formatDuration(movingTime) },
-      { label: t('chartElapsedTime'), value: formatDuration(elapsed) },
+      { label: t(averageSpeedBasis === 'elapsed' ? 'chartElapsedAverageSpeed' : sources.averageSpeed === 'estimate' ? 'chartAverageSpeedEstimated' : 'chartAverageSpeed'), value: Number.isFinite(averageSpeedMps) ? `${averageSpeedBasis === 'elapsed' ? '≈ ' : ''}${formatYValue(averageSpeedMps * 3.6, key)} km/h` : '--' },
+      { label: t(sources.movingTime === 'estimate' ? 'chartMovingTimeEstimated' : 'chartMovingTime'), value: formatDuration(movingSeconds) },
+      ...(timerSeconds !== null ? [{ label: t('chartTimerTime'), value: formatDuration(timerSeconds) }] : []),
+      { label: t('chartElapsedTime'), value: formatDuration(elapsedSeconds) },
     ]
   }
 
@@ -602,7 +624,7 @@ function scale(value, sourceMin, sourceMax, targetMin, targetMax) {
 }
 
 function formatYValue(value, key) {
-  if (key === 'heartRate' || Math.abs(value) >= 100) {
+  if (key === 'heartRate' || key === 'cadence' || Math.abs(value) >= 100) {
     return Math.round(value)
   }
 

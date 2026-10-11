@@ -21,6 +21,17 @@ const track = {
   ],
 }
 
+test('restores recorded cadence metadata and rejects invalid averages', () => {
+  const fitTrack = { ...track, format: 'fit', recordedAverageCadence: 79 }
+  const stored = { schemaVersion: 3, savedAt: '2026-10-04T12:00:00Z', sourceTrack: fitTrack, workingTrack: fitTrack }
+  const draft = normalizeRepairDraft(stored)
+  assert.equal(draft.sourceTrack.recordedAverageCadence, 79)
+  assert.equal(draft.workingTrack.recordedAverageCadence, 79)
+  for (const recordedAverageCadence of [-1, Number.NaN, '79']) {
+    assert.equal(normalizeRepairDraft({ ...stored, sourceTrack: { ...fitTrack, recordedAverageCadence } }), null)
+  }
+})
+
 test('rejects an oversized repair draft instead of truncating it', () => {
   const samples = []
   samples.length = 1_000_001
@@ -60,7 +71,7 @@ test('restores a complete active repair while dropping only transient preview st
     workingTrack: track,
     repairSession: {
       rebuildDirection: 'middle',
-      middleRepairRange: { startSampleIndex: 0, endSampleIndex: 1 },
+      middleRepairRange: { startSampleIndex: 0, endSampleIndex: 1, emergency: true, issueId: '0-1' },
       selectedCutPointIndex: null,
       tailAnchorPointIndex: 0,
       removedSegmentSamples: [],
@@ -75,6 +86,8 @@ test('restores a complete active repair while dropping only transient preview st
 
   assert.equal(draft.repairSession.selectedCutPointIndex, null)
   assert.equal(draft.repairSession.tailAnchorPointIndex, 0)
+  assert.equal(draft.repairSession.middleRepairRange.emergency, true)
+  assert.equal(draft.repairSession.middleRepairRange.issueId, '0-1')
   assert.deepEqual(draft.repairSession.viaPoints.map(({ id }) => id), ['one'])
   assert.deepEqual(draft.repairSession.legModes, { anchor: 'direct', one: 'routed' })
   assert.equal(draft.repairSession.mapMode, 'inspect')

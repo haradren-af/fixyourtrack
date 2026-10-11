@@ -1,3 +1,5 @@
+import { encodeFitSummary, resolveFitSummary } from './fitSummary.js'
+
 export function buildExportTrack(
   track,
   removedSegmentSamples,
@@ -65,19 +67,134 @@ export function finalizeTrack(track) {
   }
 
   const pointSegments = buildPointSegments(points)
+  const statistics = getTrackStatistics(samples, track.fitSummary)
 
   return {
     ...track,
+    ...(track.excludeFromAverageSpeed === true || samples.some(sample => sample.emergencyRepair || sample.reconstructed || sample.routeDistance) ? { excludeFromAverageSpeed: true } : {}),
     samples,
     points,
     pointSegments,
-    distanceMeters: pointSegments.reduce((total, segment) => total + getPolylineLength(segment), 0),
+    distanceMeters: statistics.distanceMeters,
+    statistics,
+  }
+}
+
+// Recorded odometer distance includes movement without a GPS fix. Geometry is
+// the fallback and describes repaired edges, whose original counter is stale.
+export function getSampleDistances(samples, { useRepairedGeometry = true } = {}) {
+  const result = []
+  let offset = 0
+  for (const segment of buildPointSegments(samples ?? [])) {
+    const geometry = []
+    let previousCoordinate = null
+    let geometricDistance = 0
+    const readings = []
+    let monotonic = true
+    for (let index = 0; index < segment.length; index += 1) {
+      const sample = segment[index]
+      if (isValidCoordinate(sample)) {
+        if (previousCoordinate) geometricDistance += haversineDistance(previousCoordinate, sample)
+        previousCoordinate = sample
+      }
+      geometry.push(geometricDistance)
+      if (Number.isFinite(sample.distance) && sample.distance >= 0) {
+        if (readings.length && sample.distance < readings.at(-1).distance) monotonic = false
+        readings.push({ index, distance: sample.distance })
+      }
+    }
+
+    const distances = [...geometry]
+    if (monotonic && readings.length > 1 && readings.at(-1).distance > readings[0].distance) {
+      const first = readings[0]
+      for (let readingIndex = 1; readingIndex < readings.length; readingIndex += 1) {
+        const before = readings[readingIndex - 1]
+        const after = readings[readingIndex]
+        const startTime = Date.parse(segment[before.index].time)
+        const endTime = Date.parse(segment[after.index].time)
+        for (let index = before.index; index <= after.index; index += 1) {
+          const time = Date.parse(segment[index].time)
+          const ratio = Number.isFinite(time) && endTime > startTime
+            ? clamp01((time - startTime) / (endTime - startTime))
+            : (index - before.index) / (after.index - before.index)
+          distances[index] = geometry[first.index] + before.distance - first.distance + (after.distance - before.distance) * ratio
+        }
+      }
+      const last = readings.at(-1)
+      for (let index = last.index + 1; index < segment.length; index += 1) {
+        distances[index] = distances[last.index] + geometry[index] - geometry[last.index]
+      }
+    }
+
+    result.push(offset)
+    for (let index = 1; index < segment.length; index += 1) {
+      const before = segment[index - 1]
+      const after = segment[index]
+      const ordinaryRepair = (before.repairAccepted && !before.emergencyRepair) || (after.repairAccepted && !after.emergencyRepair)
+      const repairedEdge = (after.routeDistance || (useRepairedGeometry && ordinaryRepair)) && isValidCoordinate(before) && isValidCoordinate(after)
+      offset += repairedEdge ? haversineDistance(before, after) : Math.max(0, distances[index] - distances[index - 1])
+      result.push(offset)
+    }
+  }
+  return result
+}
+
+export function getTrackStatistics(samples, fitSummary) {
+  const recorded = resolveFitSummary(fitSummary, samples)
+  const hasReconstructedTime = samples.some((sample, index) => sample.reconstructed || (index > 0 && !sample.segmentStart && sample.routeDistance))
+  const distances = getSampleDistances(samples, { useRepairedGeometry: !recorded.applicability.distance })
+  // FIT totals still provide the baseline for the recorded part of a rescued
+  // ride. Replace only the old contribution of the explicitly filled gaps.
+  const originalSamples = samples.some(sample => sample.reconstructed) ? samples.filter(sample => !sample.reconstructed).map(sample => ({ ...sample, routeDistance: false })) : null
+  const originalRecorded = originalSamples ? resolveFitSummary(fitSummary, originalSamples) : null
+  const baselineCorrection = originalRecorded?.totalDistanceMeters !== null && originalRecorded?.totalDistanceMeters !== undefined
+    ? originalRecorded.totalDistanceMeters - (getSampleDistances(originalSamples, { useRepairedGeometry: false }).at(-1) ?? 0)
+    : 0
+  const distanceMeters = recorded.totalDistanceMeters ?? Math.max(0, (distances.at(-1) ?? 0) + baselineCorrection)
+  const times = samples.map(sample => sample.time ? Date.parse(sample.time) : NaN).filter(Number.isFinite)
+  let estimatedMovingSeconds = times.length > 1 ? 0 : null
+  for (let index = 1; index < samples.length; index += 1) {
+    const before = samples[index - 1]
+    const after = samples[index]
+    if (after.segmentStart || !before.time || !after.time) continue
+    const seconds = (Date.parse(after.time) - Date.parse(before.time)) / 1000
+    if (!Number.isFinite(seconds) || seconds <= 0 || seconds > 120) continue
+    const rate = Number.isFinite(before.distance) && Number.isFinite(after.distance) && after.distance >= before.distance
+      ? (after.distance - before.distance) / seconds
+      : Number.isFinite(after.speed) ? after.speed : isValidCoordinate(before) && isValidCoordinate(after) ? haversineDistance(before, after) / seconds : 0
+    if (rate >= 0.5) estimatedMovingSeconds += seconds
+  }
+  // Interpolated gap timestamps locate points on the timeline; they cannot
+  // reveal stops or the time actually spent moving while recording was off.
+  const movingSeconds = hasReconstructedTime ? null : recorded.totalMovingSeconds ?? estimatedMovingSeconds
+  const timerSeconds = hasReconstructedTime ? null : recorded.totalTimerSeconds
+  const elapsedSeconds = recorded.totalElapsedSeconds ?? (times.length > 1 ? Math.max(0, times.at(-1) - times[0]) / 1000 : null)
+  const recordedTime = recorded.totalMovingSeconds ?? timerSeconds ?? recorded.totalElapsedSeconds
+  const averageTime = hasReconstructedTime ? elapsedSeconds : recordedTime ?? movingSeconds
+  const derivedAverage = averageTime > 0 ? distanceMeters / averageTime : distanceMeters === 0 && averageTime === 0 ? 0 : null
+  const averageSpeedMps = hasReconstructedTime ? derivedAverage : recorded.averageSpeedMps ?? derivedAverage
+  return {
+    distanceMeters, movingSeconds, timerSeconds, elapsedSeconds, averageSpeedMps,
+    ...(hasReconstructedTime ? { averageSpeedBasis: 'elapsed' } : {}),
+    startTime: recorded.startTime ?? (times.length ? new Date(times[0]).toISOString() : null),
+    endTime: recorded.endTime ?? (times.length ? new Date(times.at(-1)).toISOString() : null),
+    sources: {
+      distance: recorded.totalDistanceMeters !== null ? 'device' : 'estimate',
+      movingTime: hasReconstructedTime ? 'unavailable' : recorded.totalMovingSeconds !== null ? 'device' : 'estimate',
+      timerTime: timerSeconds !== null ? 'device' : 'unavailable',
+      elapsedTime: recorded.totalElapsedSeconds !== null ? 'device' : 'estimate',
+      averageSpeed: hasReconstructedTime ? 'estimate' : recorded.averageSpeedMps !== null ? 'device' : recordedTime !== null && recorded.totalDistanceMeters !== null ? 'recorded-derived' : 'estimate',
+    },
   }
 }
 
 export function buildGpx(track) {
   const trackName = escapeXml(track.name || 'Fixed Track')
   const pointSegments = buildExportPointSegments(track.samples ?? track.points ?? [])
+  const exportedSamples = pointSegments.flatMap(segment => segment.map((sample, index) => ({ ...sample, segmentStart: index === 0 })))
+  const summaryExtension = encodeFitSummary(track.fitSummary, exportedSamples)
+  const excludeFromAverageSpeed = track.excludeFromAverageSpeed === true || exportedSamples.some(sample => sample.emergencyRepair || sample.reconstructed || sample.routeDistance)
+  const trackExtensions = summaryExtension + (excludeFromAverageSpeed ? '<fixtrack:excludeFromAverageSpeed>true</fixtrack:excludeFromAverageSpeed>' : '')
   const segmentsXml = pointSegments
     .map((segment) => {
       const pointsXml = segment
@@ -97,6 +214,7 @@ export function buildGpx(track) {
 <gpx version="1.1" creator="Fix Your Track" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v2" xmlns:fixtrack="https://fixyourtrack.local/extensions/v1">
   <trk>
     <name>${trackName}</name>
+    ${trackExtensions ? `<extensions>${trackExtensions}</extensions>` : ''}
     ${segmentsXml}
   </trk>
 </gpx>`
@@ -407,6 +525,12 @@ function buildTrackPointExtensions(point) {
 
   if (Number.isFinite(point.distance)) {
     customFields.push(`<fixtrack:distance>${point.distance}</fixtrack:distance>`)
+  }
+  if (point.repairAccepted) {
+    customFields.push('<fixtrack:repairAccepted>true</fixtrack:repairAccepted>')
+  }
+  for (const field of ['emergencyRepair', 'reconstructed', 'routeDistance']) {
+    if (point[field]) customFields.push(`<fixtrack:${field}>true</fixtrack:${field}>`)
   }
 
   if (!extensionFields.length && !customFields.length) {

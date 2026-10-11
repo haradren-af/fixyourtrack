@@ -1,3 +1,5 @@
+import { decodeFitSummary, FIT_SUMMARY_NAMESPACE } from './fitSummary.js'
+
 export function parseGpxDocument(xml, fallbackName = 'track') {
   if (
     xml.documentElement?.localName === 'parsererror' ||
@@ -21,9 +23,16 @@ export function parseGpxDocument(xml, fallbackName = 'track') {
     throw new Error('No track geometry was found in the GPX file.')
   }
 
+  const trackNode = xml.getElementsByTagNameNS('*', 'trk')[0]
+  const extensions = Array.from(trackNode?.childNodes ?? []).find(node => node.localName === 'extensions')
+  const summaries = Array.from(extensions?.childNodes ?? []).filter(node => node.namespaceURI === FIT_SUMMARY_NAMESPACE && node.localName === 'activitySummary')
+  const summaryNode = summaries.length === 1 ? summaries[0] : null
+  const fitSummary = summaryNode ? decodeFitSummary(summaryNode.textContent, summaryNode.getAttribute('version'), summaryNode.getAttribute('source'), summaryNode.getAttribute('encoding')) : null
   return {
     name: readTrackName(xml) || fallbackName,
     format: 'gpx',
+    ...(fitSummary ? { fitSummary } : {}),
+    ...(readFixtrackFlag(trackNode, 'excludeFromAverageSpeed') ? { excludeFromAverageSpeed: true } : {}),
     samples: pointGroups.flatMap((points) => points.map((point, index) => ({
       lat: readNumericAttribute(point, 'lat'),
       lon: readNumericAttribute(point, 'lon'),
@@ -36,8 +45,16 @@ export function parseGpxDocument(xml, fallbackName = 'track') {
       power: readNumericChild(point, 'power'),
       temperature: readNumericChild(point, 'atemp'),
       segmentStart: index === 0,
+      ...(readTextChild(point, 'repairAccepted') === 'true' ? { repairAccepted: true } : {}),
+      ...Object.fromEntries(['emergencyRepair', 'reconstructed', 'routeDistance'].filter(field => readFixtrackFlag(point, field)).map(field => [field, true])),
     }))),
   }
+}
+
+function readFixtrackFlag(point, localName) {
+  const extensions = Array.from(point?.childNodes ?? []).find(node => node.localName === 'extensions')
+  const flags = Array.from(extensions?.childNodes ?? []).filter(node => node.namespaceURI === FIT_SUMMARY_NAMESPACE && node.localName === localName)
+  return flags.length === 1 && flags[0].textContent?.trim() === 'true'
 }
 
 function readNumericAttribute(node, name) {

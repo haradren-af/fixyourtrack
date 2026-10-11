@@ -4,6 +4,7 @@
   "version": "0.83.4",
   "type": "module",
   "scripts": {
+    "trails:build": "node scripts/Build-Personal-Trails.mjs",
     "dev": "vite",
     "build": "vite build",
     "check:bundle": "npm run build && node scripts/Check-Bundle-Budget.mjs",

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { resetPersonalTrails } from '../src/personalTrailStore.js'
 
 import {
   appendSegmentGeometry,
@@ -18,6 +19,39 @@ import {
 const start = { id: 'start', lat: 55.75, lon: 37.61 }
 const waypoint = { id: 'via-1', lat: 55.751, lon: 37.62 }
 const finish = { id: 'finish', lat: 55.752, lon: 37.63 }
+
+test('personal network loading obeys the build deadline even when fetch stalls', async () => {
+  resetPersonalTrails()
+  let requests = 0
+  const startedAt = Date.now()
+  try {
+    await assert.rejects(buildRoutePreview([start, waypoint, finish], {}, 'personal', {
+      buildTimeoutMs: 40,
+      fetchImpl: () => { requests += 1; return new Promise(() => {}) },
+    }), (error) => error.cause?.name === 'RouteBuildDeadlineError')
+    assert.equal(requests, 1, 'deadline failures must not split and retry the route')
+    assert.ok(Date.now() - startedAt < 500)
+  }
+  finally {
+    resetPersonalTrails()
+  }
+})
+
+test('personal network loading stops waiting when the edited route is cancelled', async () => {
+  resetPersonalTrails()
+  const controller = new AbortController()
+  try {
+    const pending = buildRoutePreview([start, finish], {}, 'personal', {
+      signal: controller.signal,
+      fetchImpl: () => new Promise(() => {}),
+    })
+    controller.abort()
+    await assert.rejects(pending, { name: 'AbortError' })
+  }
+  finally {
+    resetPersonalTrails()
+  }
+})
 
 test('returns an empty preview until two control points exist', async () => {
   assert.deepEqual(await buildRoutePreview([start], {}, 'cycling'), emptyRoutePreview)
