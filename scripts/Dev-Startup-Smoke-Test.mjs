@@ -32,8 +32,22 @@ try {
   })
   page.on('pageerror', (error) => clientErrors.push(error.message))
 
-  const response = await page.goto(url, { waitUntil: 'networkidle' })
+  // Startup must verify the local app and worker without waiting on public tiles.
+  const transparentPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  )
+  const fulfillTile = (route) => route.fulfill({
+    status: 200,
+    contentType: 'image/png',
+    body: transparentPng,
+  })
+  await page.context().route('https://tile.openstreetmap.org/**', fulfillTile)
+  await page.context().route('https://server.arcgisonline.com/**', fulfillTile)
+
+  const response = await page.goto(url, { waitUntil: 'domcontentloaded' })
   assert(response?.status() === 200, `Development server returned HTTP ${response?.status()}.`)
+  await page.locator('.map[data-map-ready="true"]').waitFor()
   assert(await page.locator('#root > *').count(), 'React did not mount into #root.')
   assert(await page.locator('body').innerText(), 'The application rendered no visible text.')
   assert(clientErrors.length === 0, `Development page reported client errors:\n${clientErrors.join('\n')}`)

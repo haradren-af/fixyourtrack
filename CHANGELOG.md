@@ -6,6 +6,23 @@ FixYourTrack uses [Semantic Versioning](https://semver.org/):
 - Minor releases (`0.10.0`) contain meaningful feature batches.
 - Version `1.0.0` will mark the first stable release.
 
+## 0.84.0 - 2026-11-05
+
+### Added
+
+- Emergency recovery of recording gaps along a drawn route, retaining surviving records and marking reconstructed time and distance without inventing sensor readings.
+- Preservation of recorded FIT session statistics through coordinate repairs, GPX export/import, and local drafts, with provenance and invalidation when underlying samples change.
+- Adjustable repair borders and track date/time editing that preserves recorded intervals and sensor data.
+- Local BikeHeatmap personal-trail routing in the Vite development/preview server; private archive data is excluded from tester packages.
+
+### Fixed
+
+- Updated vulnerable dependencies and migrated MapLibre to its patched ES module and bundled-worker integration. Map rendering now requires WebGL2.
+- Identified the exact point numbers when personal-trail routing cannot complete a section, with an explicit action to draw only that section manually while retaining successful routed sections.
+- Distinguished personal-trail retries from road-routing retries and covered manual completion beyond the personal network in a regression test.
+- Preserved recorded distance through missing GPS samples and rejected frozen distance-counter progress during coordinate repairs.
+- Kept FIT cadence summaries and reconstructed-time chart statistics consistent with their recorded or estimated provenance.
+
 ## 0.83.4 - 2026-08-21
 
 ### Changed

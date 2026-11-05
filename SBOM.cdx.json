@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:e43f6d1d-4ff7-53a1-b148-b1dbe4c0e727",
+  "serialNumber": "urn:uuid:0b21b046-2469-5417-a2a9-a05cfa985685",
   "version": 1,
   "metadata": {
     "tools": {
@@ -15,10 +15,10 @@
     },
     "component": {
       "type": "application",
-      "bom-ref": "pkg:npm/fixyourtrack@0.83.4",
+      "bom-ref": "pkg:npm/fixyourtrack@0.84.0",
       "name": "fixyourtrack",
-      "version": "0.83.4",
-      "purl": "pkg:npm/fixyourtrack@0.83.4"
+      "version": "0.84.0",
+      "purl": "pkg:npm/fixyourtrack@0.84.0"
     },
     "properties": [
       {
@@ -30,13 +30,13 @@
   "components": [
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40mapbox/jsonlint-lines-primitives@2.0.2",
+      "bom-ref": "pkg:npm/%40mapbox/jsonlint-lines-primitives@2.0.3",
       "name": "@mapbox/jsonlint-lines-primitives",
-      "version": "2.0.2",
+      "version": "2.0.3",
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "ad8d28f40e440ac4d045586feed2ff3b20e9180a14078b53bcb896d434b3406ab86ef4cf84dc3556948d8c325ce46159d97bb23ad496495374e6a3ad703ef5a9"
+          "content": "d12125695d2e331127c73061857f564ee3f251e32c00dfd24b48b5ead8ee6dae3f9a2a3adcc1bd9218c2d5ad090223c65c0c2fc26e147c725444237b9f2b9d42"
         }
       ],
       "licenses": [
@@ -46,7 +46,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/%40mapbox/jsonlint-lines-primitives@2.0.2",
+      "purl": "pkg:npm/%40mapbox/jsonlint-lines-primitives@2.0.3",
       "properties": [
         {
           "name": "fixyourtrack:package-lock-paths",
@@ -102,13 +102,13 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40mapbox/tiny-sdf@2.2.0",
+      "bom-ref": "pkg:npm/%40mapbox/tiny-sdf@2.3.0",
       "name": "@mapbox/tiny-sdf",
-      "version": "2.2.0",
+      "version": "2.3.0",
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "2d52f8c2023d600ba6e55f8b35540ee9080504fc3bfcc2086385c93cdb0f0ccae3130704f897ca9352ee225f069c5d7dede8d5742f5074f6b1af1e607e07465e"
+          "content": "801bdc34304107ae9b81062f9da27a264f9509a32656ae7e2194769163e2b13f3c67cb3490142dea17d58bc420456f15a60d14599cc1038652cb31c70be55e44"
         }
       ],
       "licenses": [
@@ -118,7 +118,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/%40mapbox/tiny-sdf@2.2.0",
+      "purl": "pkg:npm/%40mapbox/tiny-sdf@2.3.0",
       "properties": [
         {
           "name": "fixyourtrack:package-lock-paths",
@@ -138,13 +138,13 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40mapbox/unitbezier@0.0.1",
+      "bom-ref": "pkg:npm/%40mapbox/unitbezier@1.0.0",
       "name": "@mapbox/unitbezier",
-      "version": "0.0.1",
+      "version": "1.0.0",
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "9cc92e0d716feb4681afdb28506e6af86bd960bfb62991d5beca850b3aa790611fe3a5367ef9b2b4768455cd7f6196e22e7f17f9e4774335f5f9dc033b597197"
+          "content": "7ea779d797e306600d2861ac436f3a1365af8ff5ef0c5a46cf0271ab8088ea3310b9ee8ecb4e2e08aa7e256285d34c514e693a704bb58cf27da77c6a1fc616a9"
         }
       ],
       "licenses": [
@@ -154,7 +154,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/%40mapbox/unitbezier@0.0.1",
+      "purl": "pkg:npm/%40mapbox/unitbezier@1.0.0",
       "properties": [
         {
           "name": "fixyourtrack:package-lock-paths",
@@ -174,13 +174,13 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40mapbox/vector-tile@2.0.5",
+      "bom-ref": "pkg:npm/%40mapbox/vector-tile@3.0.0",
       "name": "@mapbox/vector-tile",
-      "version": "2.0.5",
+      "version": "3.0.0",
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "a578fc9bb293b2a66dfb58ec134c48a46bea4d26db95f92e1092ff34998d78f32d130c4ef15dd7303a3d58c49f0dea87bc2b4123d2e6b78986706475d3379c9b"
+          "content": "41fd744b5b881cc936d2b8bf215067a52f9eb1412455a4791dfb66cfcf234c89eba665a03c625f3dedcb5638e513beedacbc7cb47eaa8d31bbb961fd848abfd1"
         }
       ],
       "licenses": [
@@ -190,7 +190,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/%40mapbox/vector-tile@2.0.5",
+      "purl": "pkg:npm/%40mapbox/vector-tile@3.0.0",
       "properties": [
         {
           "name": "fixyourtrack:package-lock-paths",
@@ -210,49 +210,13 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40mapbox/whoots-js@3.1.0",
-      "name": "@mapbox/whoots-js",
-      "version": "3.1.0",
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "12ce96703d273b997ed813904b8b8b7cd3d841a3437dba2ddd7d57528968cfec7498f0d2dde78e459265d3a1d78f0046d5f386c02467ccaf3c2cc771291adde9"
-        }
-      ],
-      "licenses": [
-        {
-          "license": {
-            "id": "ISC"
-          }
-        }
-      ],
-      "purl": "pkg:npm/%40mapbox/whoots-js@3.1.0",
-      "properties": [
-        {
-          "name": "fixyourtrack:package-lock-paths",
-          "value": "node_modules/@mapbox/whoots-js"
-        },
-        {
-          "name": "fixyourtrack:optional",
-          "value": "false"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/mapbox/whoots-js"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40maplibre/geojson-vt@6.1.0",
+      "bom-ref": "pkg:npm/%40maplibre/geojson-vt@6.3.0",
       "name": "@maplibre/geojson-vt",
-      "version": "6.1.0",
+      "version": "6.3.0",
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "d9e218e2067178a21539954d90031bfb93605e182c310a4ebde4d002f9e9e772d8a8718964389d93b130d1381e77d3d38627696d2f8d153874838ce2be13c3cd"
+          "content": "dd9c368ec53da48246dc6d824056cb8d68f6325007a1d843edc498fb5e62cb052e2e69a483370a467b9e55167801c0bfe703ad7e189d709000cc1a6804db375e"
         }
       ],
       "licenses": [
@@ -262,7 +226,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/%40maplibre/geojson-vt@6.1.0",
+      "purl": "pkg:npm/%40maplibre/geojson-vt@6.3.0",
       "properties": [
         {
           "name": "fixyourtrack:package-lock-paths",
@@ -282,13 +246,13 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40maplibre/maplibre-gl-style-spec@24.9.0",
+      "bom-ref": "pkg:npm/%40maplibre/maplibre-gl-style-spec@26.5.1",
       "name": "@maplibre/maplibre-gl-style-spec",
-      "version": "24.9.0",
+      "version": "26.5.1",
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "ee9be38308a812d9c25d181f3e0a091a5160d63634ac15cda0f98c47cb8072a77a9ba7772e328c49cd60cda42244cbc3321eb08deeb3ec511e8d313a26e16d88"
+          "content": "f6e7d0e4b47e2dd9fced220b3d5c91373e30566fec06b336651bfd55f8cb44a60a20601cbc2d55170fc312424b007a9f315f26d37cc3cf50d43532148ff1af74"
         }
       ],
       "licenses": [
@@ -298,7 +262,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/%40maplibre/maplibre-gl-style-spec@24.9.0",
+      "purl": "pkg:npm/%40maplibre/maplibre-gl-style-spec@26.5.1",
       "properties": [
         {
           "name": "fixyourtrack:package-lock-paths",
@@ -318,13 +282,13 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40maplibre/mlt@1.1.11",
+      "bom-ref": "pkg:npm/%40maplibre/mlt@1.3.0",
       "name": "@maplibre/mlt",
-      "version": "1.1.11",
+      "version": "1.3.0",
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "74abe329d213c3d774cb79dd1a44aa2d41295828b332d76af0d074e9c1e8847fc9676b09a0cedd0a547dc3324b516ca48dbc3d4570c59a18e33419cd5b6ee6cf"
+          "content": "eccd8eec004cf343a2f173e47e4ae3281f263812311a8560900e7632ee11316a01bef31d6a0439db6f96c5562e8d9b0ca6a22bdc1a73ad36d7ae6e24f250b309"
         }
       ],
       "licenses": [
@@ -332,7 +296,7 @@
           "expression": "(MIT OR Apache-2.0)"
         }
       ],
-      "purl": "pkg:npm/%40maplibre/mlt@1.1.11",
+      "purl": "pkg:npm/%40maplibre/mlt@1.3.0",
       "properties": [
         {
           "name": "fixyourtrack:package-lock-paths",
@@ -352,13 +316,13 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40maplibre/vt-pbf@4.3.2",
+      "bom-ref": "pkg:npm/%40maplibre/vt-pbf@4.3.3",
       "name": "@maplibre/vt-pbf",
-      "version": "4.3.2",
+      "version": "4.3.3",
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "8faa7401d8ef011d7d6775da0b2b257bb038652a34f2d60ecf10f463d350ca5c0f024c0925e62e6f96f6795b9c75e0e1edeae1bfaf436a1a0b39ebc344445153"
+          "content": "7447b95d477ae1141bc4dc72d8ecc89099f03435a35664978c277403bccb8ab9bb409fd659b9ad0c52247ec88ce32b7572996acc6ea84a2bd161e5b1d52335ca"
         }
       ],
       "licenses": [
@@ -368,7 +332,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/%40maplibre/vt-pbf@4.3.2",
+      "purl": "pkg:npm/%40maplibre/vt-pbf@4.3.3",
       "properties": [
         {
           "name": "fixyourtrack:package-lock-paths",
@@ -460,6 +424,42 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/bidi-js@1.1.0",
+      "name": "bidi-js",
+      "version": "1.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "7d7d4e9e4d2d7553c2ee86cf581e446c9d73ecd5612eae26db164bab6617064c7331720646934c53cf27d043e05ac78a975d89ef35eceeaac3c4f2b8b11b367e"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/bidi-js@1.1.0",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/bidi-js"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/lojjic/bidi-js"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/buffer@6.0.3",
       "name": "buffer",
       "version": "6.0.3",
@@ -496,13 +496,13 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/earcut@3.0.2",
+      "bom-ref": "pkg:npm/earcut@3.2.4",
       "name": "earcut",
-      "version": "3.0.2",
+      "version": "3.2.4",
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "5fb86c8506cbc8c27fdd13e1c8e6cb011336b0dc7199100b2cac75f8d54516743d80ace60abc66f7eb8b20074172f73c14d2e972daa543657a004f763a5f540d"
+          "content": "14773ac8da674ce441d2d339926674de20f6983b8d6a40c4da5bdfe07c355e47f1b441c81958b4d41fc6a944b0c7e35c0b55868e27407e94d7cde00bb4fb5fa6"
         }
       ],
       "licenses": [
@@ -512,7 +512,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/earcut@3.0.2",
+      "purl": "pkg:npm/earcut@3.2.4",
       "properties": [
         {
           "name": "fixyourtrack:package-lock-paths",
@@ -712,13 +712,13 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/maplibre-gl@5.24.0",
+      "bom-ref": "pkg:npm/maplibre-gl@6.16.0",
       "name": "maplibre-gl",
-      "version": "5.24.0",
+      "version": "6.16.0",
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "00bc85c60b5de51fbae54a99ffefa53aac16702d12361a3d736edf612c8b986ec07e702e976a38e85d396832463db154e7bc28b3d760708c921ecd177ba89adc"
+          "content": "800a4eeba10cb680d9ba2a3af3445406fb2447b6a115dfcd3612cde2d040b3e63b15e4f881057ccd5160615311985c50ce7384cde716d7dc3ac4e77d5e366388"
         }
       ],
       "licenses": [
@@ -728,7 +728,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/maplibre-gl@5.24.0",
+      "purl": "pkg:npm/maplibre-gl@6.16.0",
       "properties": [
         {
           "name": "fixyourtrack:package-lock-paths",
@@ -820,13 +820,13 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/pbf@4.0.2",
+      "bom-ref": "pkg:npm/pbf@5.1.2",
       "name": "pbf",
-      "version": "4.0.2",
+      "version": "5.1.2",
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "2746a3c4046165fa5411e6f162cd6f84c18cb8b497b417b57be7c53c3adfdae036860a3e52c84a7cd5163b3f761c9373ebf345117b1e40f75d9c7913ade591aa"
+          "content": "9a7bc676f3ab22f24e04650474692b5578cdf04fd590824291fd9e4b50c7db2bfcd8e45494bb6d983b74ad6637f32619995c1c899c0152f1ccdb4ab10597f8d3"
         }
       ],
       "licenses": [
@@ -836,47 +836,11 @@
           }
         }
       ],
-      "purl": "pkg:npm/pbf@4.0.2",
+      "purl": "pkg:npm/pbf@5.1.2",
       "properties": [
         {
           "name": "fixyourtrack:package-lock-paths",
           "value": "node_modules/pbf"
-        },
-        {
-          "name": "fixyourtrack:optional",
-          "value": "false"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/mapbox/pbf"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/pbf@5.1.0",
-      "name": "pbf",
-      "version": "5.1.0",
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "5afd32a34fae65ea67a0d10ab2aba16abd45d7c2e8801f287848a42215171b5eae75b8971bb25e7071b24b0a28ea4b8c82399b418cddad36653befcaf6df1e66"
-        }
-      ],
-      "licenses": [
-        {
-          "license": {
-            "id": "BSD-3-Clause"
-          }
-        }
-      ],
-      "purl": "pkg:npm/pbf@5.1.0",
-      "properties": [
-        {
-          "name": "fixyourtrack:package-lock-paths",
-          "value": "node_modules/@maplibre/vt-pbf/node_modules/pbf"
         },
         {
           "name": "fixyourtrack:optional",
@@ -1067,6 +1031,42 @@
         {
           "type": "vcs",
           "url": "https://github.com/facebook/react"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/require-from-string@2.0.2",
+      "name": "require-from-string",
+      "version": "2.0.2",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "5dfd2759ee91b1ece214cbbe029f5b8a251b9a996ae92f7fa7eef0ed85cffc904786b5030d48706bebc0372b9bbaa7d9593bde53ffc36151ac0c6ed128bfef13"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/require-from-string@2.0.2",
+      "properties": [
+        {
+          "name": "fixyourtrack:package-lock-paths",
+          "value": "node_modules/require-from-string"
+        },
+        {
+          "name": "fixyourtrack:optional",
+          "value": "false"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/floatdrop/require-from-string"
         }
       ]
     },
