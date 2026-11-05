@@ -371,9 +371,9 @@ function App() {
     routeFingerprint,
     controlPoints.length,
   )
-  const routeFailureMessage = useMemo(() => {
+  const routeFailureSection = useMemo(() => {
     if (effectiveRoutePreview.status !== 'error') {
-      return ''
+      return null
     }
 
     const fromIndex = controlPoints.findIndex(({ id }) => (
@@ -383,9 +383,18 @@ function App() {
       id === effectiveRoutePreview.failedToControlId
     ))
     return fromIndex >= 0 && toIndex >= 0
-      ? t('routeSectionUnconfirmed', { from: fromIndex + 1, to: toIndex + 1 })
-      : t('routeUnconfirmed')
-  }, [controlPoints, effectiveRoutePreview, t])
+      ? {
+          from: fromIndex + 1,
+          to: toIndex + 1,
+          fromId: controlPoints[fromIndex].id,
+          canTraceDirectly: toIndex === fromIndex + 1 &&
+            effectiveRoutePreview.segments[fromIndex]?.mode === 'unresolved',
+        }
+      : null
+  }, [controlPoints, effectiveRoutePreview])
+  const routeFailureMessage = routeProfile === 'personal'
+    ? t(routeFailureSection ? 'personalTrailsSectionNoRoute' : 'personalTrailsNoRoute', routeFailureSection ?? {})
+    : t(routeFailureSection ? 'routeSectionUnconfirmed' : 'routeUnconfirmed', routeFailureSection ?? {})
 
   const routeStartDistanceMeters = useMemo(() => {
     if (rebuildDirection === 'before' || !anchorPoint) {
@@ -2507,13 +2516,25 @@ function App() {
                 ) : null}
                 {effectiveRoutePreview.status === 'error' ? (
                   <div className="note note-warning route-retry-note">
-                    <span>{routeProfile === 'personal' ? t('personalTrailsNoRoute') : routeFailureMessage}</span>
+                    <span>{routeFailureMessage}</span>
+                    {routeProfile === 'personal' && routeFailureSection?.canTraceDirectly ? (
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() => {
+                          setLegModes((current) => setLegMode(current, routeFailureSection.fromId, directLegMode))
+                          setMessage(t('legSetManual'))
+                        }}
+                      >
+                        {t('personalTrailsTraceSection', routeFailureSection)}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="ghost-button"
                       onClick={() => setRouteBuildRequest((current) => current + 1)}
                     >
-                      {t('retryRoute')}
+                      {t(routeProfile === 'personal' ? 'personalTrailsRetry' : 'retryRoute')}
                     </button>
                   </div>
                 ) : null}

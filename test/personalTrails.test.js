@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { buildPersonalNetwork, indexPersonalNetwork, routePersonalNetwork, personalNetworkGeoJson } from '../src/personalTrails.js'
-import { buildRoutePreview } from '../src/routeBuilder.js'
+import { buildRouteDisplayPreview, buildRoutePreview } from '../src/routeBuilder.js'
 import { resetPersonalTrails } from '../src/personalTrailStore.js'
 
 const point = (x, y, second = x) => ({ lat: 55 + y / 111320, lon: 37 + x / (111320 * Math.cos(55 * Math.PI / 180)), time: new Date(Date.UTC(2026, 0, 1) + second * 1000).toISOString() })
@@ -52,4 +52,44 @@ test('personal repair uses the local network without public routing and preserve
   assert.deepEqual(preview.geometry.at(-1), { lat: controls[1].lat, lon: controls[1].lon })
   assert.equal(personalNetworkGeoJson(network).features.length, 2)
   resetPersonalTrails()
+})
+
+test('a repair leaving personal trails needs an explicit manual final leg and retains the routed part', async () => {
+  resetPersonalTrails()
+  const network = buildPersonalNetwork([line(0)])
+  const controls = [
+    { ...point(0, 0), id: 'anchor' },
+    { ...point(300, 0), id: 'via' },
+    { ...point(300, 80), id: 'endpoint' },
+  ]
+  const cache = new Map()
+  const requests = []
+  const fetchImpl = async (url) => {
+    requests.push(url)
+    return new Response(JSON.stringify(network))
+  }
+  try {
+    let failure
+    await assert.rejects(buildRoutePreview(controls, {}, 'personal', { fetchImpl, cache }), (error) => {
+      failure = error
+      return error.fromControlId === 'via' && error.toControlId === 'endpoint'
+    })
+    const unresolved = buildRouteDisplayPreview(controls, {}, 'personal', {
+      cache,
+      status: 'error',
+      failedLegId: failure.fromControlId,
+      failedToControlId: failure.toControlId,
+    })
+    assert.deepEqual(unresolved.segments.map(({ mode }) => mode), ['routed', 'unresolved'])
+
+    const repaired = await buildRoutePreview(controls, { via: 'direct' }, 'personal', { fetchImpl, cache })
+    assert.equal(repaired.status, 'ready')
+    assert.deepEqual(repaired.segments.map(({ mode }) => mode), ['routed', 'direct'])
+    assert.deepEqual(repaired.segments[0].geometry, unresolved.segments[0].geometry)
+    assert.deepEqual(repaired.segments[1].geometry, controls.slice(1).map(({ lat, lon }) => ({ lat, lon })))
+    assert.deepEqual(requests, ['/local-trails/network.json'])
+  }
+  finally {
+    resetPersonalTrails()
+  }
 })
